@@ -1,0 +1,28 @@
+[
+  {
+    "name": "listAsset",
+    "type": "function",
+    "stateMutability": "payable",
+    "inputs": [
+      { "name": "title", "type": "string" },
+      { "name": "price", "type": "uint256" }
+    ],
+    "outputs": []
+  },
+  {
+    "name": "purchaseAsset",
+    "type": "function",
+    "stateMutability": "payable",
+    "inputs": [
+      { "name": "listingId", "type": "uint256" }
+    ],
+    "outputs": []
+  },
+  {
+    "name": "withdrawFees",
+    "type": "function",
+    "stateMutability": "nonpayable",
+    "inputs": [],
+    "outputs": []
+  }
+]
