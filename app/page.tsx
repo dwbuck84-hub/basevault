@@ -1,14 +1,17 @@
 'use client';
 
+// ⚡ Force dynamic execution to bypass static prerendering build crashes
+export const dynamic = 'force-dynamic';
+
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
 
-// 📡 Initialize Supabase Client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// 📡 Safe Initialize Supabase Client with static build-time fallbacks
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://qwuurofqumhoiikumxlg.supabase.co";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_LPouw16DZly6LqleGNFp-Q_sbx3JD-B";
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // 🛠️ Extend Global Window Interface for TypeScript Compiler
 declare global {
@@ -28,7 +31,7 @@ const CONTRACT_ABI = [
 ];
 
 export default function Home() {
-  // Hardcoded default for home root workspace simulation view (Can be dynamically extracted if router params are used)
+  // Hardcoded default for home root workspace simulation view
   const gigId = 12; 
   
   // App States
