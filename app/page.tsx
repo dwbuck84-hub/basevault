@@ -1,343 +1,761 @@
 'use client';
 
-// ⚡ Force dynamic execution to bypass static prerendering build crashes
 export const dynamic = 'force-dynamic';
 
-import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { ethers } from 'ethers';
+import { useState, useEffect, Suspense, useRef } from 'react';
+import { parseEther, formatEther, createPublicClient, http } from 'viem';
+import { base } from 'wagmi/chains';
+import { supabase } from '../lib/supabaseClient';
+import { useSearchParams } from 'next/navigation';
+import { 
+  useAccount, 
+  useConnect, 
+  useDisconnect, 
+  useWriteContract, 
+  useBalance,
+  useReadContract,
+  useWaitForTransactionReceipt,
+  useSwitchChain
+} from 'wagmi';
 
-// 📡 Safe Initialize Supabase Client with static build-time fallbacks
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://qwuurofqumhoiikumxlg.supabase.co";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_LPouw16DZly6LqleGNFp-Q_sbx3JD-B";
+import MARKETPLACE_ABI from '../constants/abi.json';
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// 🛠️ Extend Global Window Interface for TypeScript Compiler
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
+interface Listing {
+  id: number;
+  type: 'physical_asset' | 'smart_bounty' | 'tokenized_nft'; 
+  title: string;
+  price: string; 
+  buyNowPrice?: string; 
+  bidsCount: number;
+  category: string;
+  seller: string;
+  rating: number;
+  ratingCount: number; 
+  description: string;
+  images: string[];
+  duration?: string;
+  status: 'Active' | 'Sold' | 'Unsold' | 'Quarantined'; 
+  highestBidder?: string; 
+  nftContract?: string;
+  nftTokenId?: string;
+  buyerShippingAddress?: string;
+  buyerShippingMethod?: string;
+  trackingNumber?: string;
+  escrowReleased: boolean;
+  watermarkedFilePreview?: string;
+  cleanFileUrl?: string; 
+  governanceFlags: number; 
 }
 
-// 📜 Smart Contract Topology 
-const CONTRACT_ADDRESS = "0x6eD3E30FC82B361cACaC98C46C3Ae19C99fe05A8";
-const CONTRACT_ABI = [
-  "function gigs(uint256) view returns (uint256 id, address buyer, address seller, uint256 amount, string trackingNumber, uint256 trackingSubmittedAt, bool isDisputed, uint8 status)",
-  "function submitTracking(uint256 _gigId, string calldata _trackingNumber) external",
-  "function releaseEscrowFunds(uint256 _gigId) external",
-  "function toggleDispute(uint256 _gigId) external",
-  "function claimExpiredEscrow(uint256 _gigId) external"
-];
+const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
+const VAULT_CONTRACT_ADDRESS = "0x4bEa1744818C8B0Bb744e3524670F27253AE7aA5";
 
 export default function Home() {
-  // Hardcoded default for home root workspace simulation view
-  const gigId = 12; 
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">// INITIALIZING ACTIVE BASEVAULT INFRASTRUCTURE...</div>}>
+      <MarketplaceContent />
+    </Suspense>
+  );
+}
+
+function MarketplaceContent() {
+  const { address, isConnected, chainId } = useAccount();
+  const { connectors, connect } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
+  const { data: txHash, writeContract, isPending: isTxPending } = useWriteContract();
+  const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+  const contractBalance = useBalance({ address: VAULT_CONTRACT_ADDRESS });
+
+  const searchParams = useSearchParams();
+  const id = searchParams.get('id');
+
+  const [activeTab, setActiveTab] = useState<'browse' | 'list' | 'escrow_stream' | 'vault_dashboard'>('browse');
+  const [browseSubTab, setBrowseSubTab] = useState<'all' | 'physical_asset' | 'smart_bounty' | 'tokenized_nft'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [visibleCount, setVisibleCount] = useState(12); 
+  const [selectedItem, setSelectedItem] = useState<Listing | null>(null);
+  const [bidAmount, setBidAmount] = useState('');
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [tosAccepted, setTosAccepted] = useState(false);
+  const [isUploadingToIpfs, setIsUploadingToIpfs] = useState<Record<number, boolean>>({});
+  const [deliveryPayloads, setDeliveryPayloads] = useState<Record<number, string>>({});
+  const [ethUsdRate, setEthUsdRate] = useState<number>(3100); 
+
+  const [activeChatGigId, setActiveChatGigId] = useState<number | null>(null);
+  const [chatMessage, setChatMessage] = useState('');
+  const [chatLogs, setChatLogs] = useState<Array<{sender: string, text: string, created_at?: string}>>([]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const [formType, setFormType] = useState<'physical_asset' | 'smart_bounty' | 'tokenized_nft'>('physical_asset');
+  const [formTitle, setFormTitle] = useState('');
+  const [formCategory, setFormCategory] = useState('Sneakers & Apparel');
+  const [formPrice, setFormPrice] = useState(''); 
+  const [formBuyNowPrice, setFormBuyNowPrice] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+
+  const itemCategories = ["Sneakers & Apparel", "Luxury Chronographs", "Hardware Components", "Vintage Electronics", "Collectibles & Art Assets"];
+  const bountyCategories = ["Software Development", "Interface Design", "Smart Contract Audit", "Digital Content Generation", "Protocol Optimization"];
+  const nftCategories = ["Generative Art Collections", "Virtual Environment Nodes", "Utility Access Passes", "Gaming Registry Keys"];
+
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [mounted, setMounted] = useState(false);
   
-  // App States
-  const [loading, setLoading] = useState<boolean>(true);
-  const [userWallet, setUserWallet] = useState<string>("");
-  const [userRole, setUserRole] = useState<'buyer' | 'seller' | 'none'>('none');
-  const [isSuspended, setIsSuspended] = useState<boolean>(false);
-  const [trackingInput, setTrackingInput] = useState<string>("");
-  
-  // Escrow Struct Mirror State
-  const [escrow, setEscrow] = useState<{
-    buyer: string;
-    seller: string;
-    amount: string;
-    trackingNumber: string;
-    trackingSubmittedAt: number;
-    isDisputed: boolean;
-    status: number; // 0: Active, 1: Shipped, 2: Disputed, 3: Settled, 4: Refunded
-  } | null>(null);
+  useEffect(() => { setMounted(true); }, []);
+
+  // Upgraded Real-Time Telemetry Pipeline
+  useEffect(() => {
+    if (!activeChatGigId) return;
+
+    const fetchChatHistory = async () => {
+      const { data, error } = await supabase
+        .from('marketplace_chats')
+        .select('sender, message_text, created_at')
+        .eq('gig_id', activeChatGigId)
+        .order('id', { ascending: true });
+
+      if (!error && data) {
+        setChatLogs(data.map(m => ({ 
+          sender: m.sender.toLowerCase(), 
+          text: m.message_text,
+          created_at: m.created_at 
+        })));
+      }
+    };
+    fetchChatHistory();
+
+    const telemetryChannel = supabase
+      .channel(`gig_telemetry_${activeChatGigId}`)
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'marketplace_chats',
+        filter: `gig_id=eq.${activeChatGigId}`
+      }, (payload) => {
+        const newMsg = payload.new;
+        setChatLogs(prev => {
+          if (prev.some(m => m.created_at === newMsg.created_at && m.text === newMsg.message_text)) return prev;
+          return [...prev, { sender: newMsg.sender.toLowerCase(), text: newMsg.message_text, created_at: newMsg.created_at }];
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(telemetryChannel);
+    };
+  }, [activeChatGigId]);
 
   useEffect(() => {
-    connectAndLoadData();
-  }, [gigId]);
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatLogs]);
 
-  // 🛠️ Step 1: Connect Wallet & Run Behavioral Health Checks against Supabase
-  const connectAndLoadData = async () => {
-    try {
-      if (!window.ethereum) return alert("Please install a Web3 wallet extension.");
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const walletAddress = (await signer.getAddress()).toLowerCase();
-      setUserWallet(walletAddress);
-
-      // Fetch user profiling from Supabase to enforce rules
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('times_ghosted_seller, total_disputes_filed')
-        .eq('wallet_address', walletAddress)
-        .single();
-
-      if (profile && profile.times_ghosted_seller >= 3) {
-        setIsSuspended(true);
-        setLoading(false);
-        return;
+  useEffect(() => {
+    const fetchCurrentPriceFeed = async () => {
+      try {
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+        const data = await response.json();
+        if (data?.ethereum?.usd) setEthUsdRate(Number(data.ethereum.usd));
+      } catch (err) {
+        console.error("Failed to sync fiat translation ticker:", err);
       }
+    };
+    fetchCurrentPriceFeed();
+    const priceTickerInterval = setInterval(fetchCurrentPriceFeed, 60000); 
+    return () => clearInterval(priceTickerInterval);
+  }, []);
 
-      // Fetch On-Chain State Parameters
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-      const chainData = await contract.gigs(gigId);
-      
-      const mappedEscrow = {
-        buyer: chainData.buyer.toLowerCase(),
-        seller: chainData.seller.toLowerCase(),
-        amount: ethers.formatEther(chainData.amount),
-        trackingNumber: chainData.trackingNumber,
-        trackingSubmittedAt: Number(chainData.trackingSubmittedAt),
-        isDisputed: chainData.isDisputed,
-        status: Number(chainData.status)
-      };
+  const { data: totalListingsCount, refetch: reloadContractCount } = useReadContract({
+    address: VAULT_CONTRACT_ADDRESS,
+    abi: MARKETPLACE_ABI,
+    functionName: 'totalListingsCount',
+  });
 
-      setEscrow(mappedEscrow);
+  const sourceLiveRegistry = async () => {
+    if (!totalListingsCount) return;
+    const publicClient = createPublicClient({ chain: base, transport: http() });
+    const activeChainListings: Listing[] = [];
+    const count = Number(totalListingsCount);
+    const boundaryStop = Math.max(1, count - visibleCount + 1);
 
-      if (walletAddress === mappedEscrow.buyer) setUserRole('buyer');
-      else if (walletAddress === mappedEscrow.seller) setUserRole('seller');
+    for (let i = count; i >= boundaryStop; i--) {
+      try {
+        const structData = await publicClient.readContract({
+          address: VAULT_CONTRACT_ADDRESS,
+          abi: MARKETPLACE_ABI,
+          functionName: 'listings',
+          args: [BigInt(i)],
+        }) as any;
 
-      setLoading(false);
-    } catch (err) {
-      console.error("Error setting up workspace pipeline:", err);
-      setLoading(false);
+        if (structData && Number(structData.status) !== 3) {
+          const typeMapping: ('physical_asset' | 'smart_bounty' | 'tokenized_nft')[] = ['physical_asset', 'smart_bounty', 'tokenized_nft'];
+          activeChainListings.push({
+            id: i,
+            type: typeMapping[Number(structData.assetType ?? 0)],
+            title: structData.title || `Asset Node #${i}`,
+            price: formatEther(structData.price ?? BigInt(0)),
+            buyNowPrice: structData.buyNowPrice && structData.buyNowPrice > BigInt(0) ? formatEther(structData.buyNowPrice) : undefined,
+            bidsCount: Number(structData.bidsCount ?? 0),
+            category: structData.category || "General Registry",
+            seller: structData.seller,
+            rating: Number(structData.rating ?? 50) / 10,
+            ratingCount: Number(structData.ratingCount ?? 0),
+            description: structData.description || "",
+            images: structData.images && structData.images.length > 0 ? structData.images : ["https://picsum.photos/id/24/800/600"],
+            status: ['Active', 'Sold', 'Unsold', 'Quarantined'][Number(structData.status ?? 0)] as any,
+            escrowReleased: Boolean(structData.escrowReleased),
+            watermarkedFilePreview: structData.deliveryHash ? "DECENTRALIZED ENCRYPTED PACKAGE INSTANCE LOCKED IN ESCOW" : undefined,
+            cleanFileUrl: structData.deliveryHash ? `https://gateway.pinata.cloud/ipfs/${structData.deliveryHash}` : undefined,
+            governanceFlags: Number(structData.governanceFlags ?? 0)
+          });
+        }
+      } catch (err) {
+        console.error(`Blockchain sync mismatch on array node #${i}:`, err);
+      }
     }
+    setListings(activeChainListings);
   };
 
-  // 📤 Seller Action: Submit Tracking & Update Timestamps
-  const handleTrackingSubmission = async () => {
-    if (!trackingInput) return alert("Please type a valid tracking number.");
+  useEffect(() => { sourceLiveRegistry(); }, [totalListingsCount, visibleCount]);
+  useEffect(() => { if (isTxConfirmed) { reloadContractCount(); sourceLiveRegistry(); } }, [isTxConfirmed]);
+
+  const verifyActiveNetworkChain = (): boolean => {
+    if (chainId !== base.id) {
+      alert("⚠️ NETWORK ALIGNMENT ERROR:\n\nYour wallet is connected to an alternate chain sequence. Forcing interface lock until network is aligned onto Base.");
+      if (switchChain) switchChain({ chainId: base.id });
+      return false;
+    }
+    return true;
+  };
+
+  const handleAdminWithdrawLiquidity = () => {
+    if (!mounted || !isConnected) return;
+    if (address?.toLowerCase() !== DEVELOPER_ADMIN_ADDRESS.toLowerCase()) {
+      alert("Security Error: Administrative operation revoked. Missing on-chain key signatures.");
+      return;
+    }
+    if (!verifyActiveNetworkChain()) return;
+    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'withdrawFees' });
+  };
+
+  const convertEthToUsd = (eth: string) => {
+    const val = parseFloat(eth);
+    return isNaN(val) ? '0.00' : (val * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const calculateListingFee = (type: 'physical_asset' | 'smart_bounty' | 'tokenized_nft', priceStr: string) => {
+    if (type === 'smart_bounty') return { eth: '0.0200', usd: convertEthToUsd('0.02') };
+    const priceEth = parseFloat(priceStr);
+    if (isNaN(priceEth)) return { eth: '0.0000', usd: '0.00' };
+    const priceUsd = priceEth * ethUsdRate;
+    return priceUsd > 500 ? { eth: (priceEth * 0.015).toFixed(4), usd: (priceUsd * 0.015).toFixed(2) } : { eth: '0.0025', usd: convertEthToUsd('0.0025') };
+  };
+
+  const calculateMarketplaceTake = (priceStr: string) => {
+    const totalAmt = parseFloat(priceStr);
+    if (isNaN(totalAmt)) return { sellerCut: '0.0000', platformCut: '0.0000', sellerUsd: '0.00', platformUsd: '0.00' };
+    return {
+      sellerCut: (totalAmt * 0.96).toFixed(4),
+      platformCut: (totalAmt * 0.04).toFixed(4),
+      sellerUsd: (totalAmt * 0.96 * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      platformUsd: (totalAmt * 0.04 * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    };
+  };
+
+  const handleFreelancerSandboxUpload = async (gigId: number, file: File) => {
+    if (!file) return;
+    setIsUploadingToIpfs(prev => ({ ...prev, [gigId]: true }));
     try {
-      setLoading(true);
-      const provider = new ethers.BrowserProvider(window.ethereum!);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-      const tx = await contract.submitTracking(gigId, trackingInput);
-      await tx.wait();
-
-      // Log to Supabase Chat Thread as system message
-      await supabase.from('marketplace_chats').insert({
-        gig_id: gigId,
-        sender: 'system',
-        message: `System Alert: Seller has shipped the physical item. Tracking ID entered: ${trackingInput}. The 14-day resolution clock has been initialized.`
-      });
-
-      alert("Tracking successfully written to the blockchain sequencer.");
-      connectAndLoadData();
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch('/api/ipfs-upload', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (data?.IpfsHash) {
+        setDeliveryPayloads(prev => ({ ...prev, [gigId]: data.IpfsHash }));
+        alert(`🎉 DECENTRALIZED SANDBOX SECURED!\n\nContent Hash: ${data.IpfsHash}`);
+      } else {
+        throw new Error("Invalid IPFS registry returns.");
+      }
     } catch (err) {
-      console.error(err);
-      setLoading(false);
+      alert("Network Error: Decentralized routing frame failed to pin element node.");
+    } finally {
+      setIsUploadingToIpfs(prev => ({ ...prev, [gigId]: false }));
     }
   };
 
-  // 🔓 Buyer Action: Release Funds Manually
-  const handleManualRelease = async () => {
-    try {
-      setLoading(true);
-      const provider = new ethers.BrowserProvider(window.ethereum!);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+  const handleBroadcastDeliveryProof = (gigId: number) => {
+    if (!verifyActiveNetworkChain()) return;
+    const fileHash = deliveryPayloads[gigId];
+    if (!fileHash) return alert("No cryptographic payload attached to node pipeline.");
+    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'submitBountyPayload', args: [BigInt(gigId), fileHash] });
+  };
 
-      const tx = await contract.releaseEscrowFunds(gigId);
-      await tx.wait();
+  const runSecurityComplianceScanner = async (title: string, desc: string): Promise<boolean> => {
+    const illegalBlacklistArr = ['gun', 'rifle', 'glock', 'weapon', 'ammo', 'drug', 'cocaine', 'fentanyl', 'porn', 'xxx', 'organ', 'human'];
+    const compositeCleanText = `${title.toLowerCase()} ${desc.toLowerCase()}`;
+    for (const forbiddenWord of illegalBlacklistArr) {
+      if (new RegExp(`\\b${forbiddenWord}\\b|${forbiddenWord}`, 'i').test(compositeCleanText)) {
+        alert(`❌ POLICY COMPLIANCE EXCEPTION:\n\nProhibited entry parameters encountered [Detected: "${forbiddenWord}"].`);
+        return false; 
+      }
+    }
+    return true; 
+  };
 
-      alert("Funds successfully disbursed (96% to seller / 4% platform fee split completed).");
-      connectAndLoadData();
-    } catch (err) {
-      console.error(err);
-      setLoading(false);
+  const handleCreateListing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!verifyActiveNetworkChain()) return;
+    const passedCompliance = await runSecurityComplianceScanner(formTitle, formDescription);
+    if (!passedCompliance) return;
+
+    const fee = calculateListingFee(formType, formPrice);
+    const typeMapping = { physical_asset: 0, smart_bounty: 1, tokenized_nft: 2 };
+    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'listAsset', args: [BigInt(Date.now()), typeMapping[formType], parseEther(formPrice || '0')], value: parseEther(fee.eth) });
+  };
+
+  const handleBuyNow = () => {
+    if (!selectedItem || !verifyActiveNetworkChain()) return;
+    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: parseEther(selectedItem.buyNowPrice || selectedItem.price) });
+    setSelectedItem(null);
+  };
+
+  const handlePlaceBid = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedItem || !verifyActiveNetworkChain()) return;
+    if (parseFloat(bidAmount) <= parseFloat(selectedItem.price)) return alert("Bid position evaluation failure.");
+    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: parseEther(bidAmount) });
+    setSelectedItem(null);
+    setBidAmount('');
+  };
+
+  const handleBuyerReleaseGigEscrow = (id: number) => {
+    if (!verifyActiveNetworkChain()) return;
+    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'releaseEscrowFunds', args: [BigInt(id)] });
+  };
+
+  const sendChatMessage = async (gigId: number) => {
+    if (!chatMessage.trim() || !address) return alert("Connect wallet to broadcast telemetry.");
+    const currentMessageString = chatMessage.trim();
+    setChatMessage(''); 
+
+    const { error } = await supabase
+      .from('marketplace_chats')
+      .insert([{ 
+        gig_id: gigId, 
+        sender: address.toLowerCase(), 
+        message_text: currentMessageString 
+      }]);
+
+    if (error) {
+      console.error("Telemetry distribution breakdown:", error);
+      setChatMessage(currentMessageString); 
     }
   };
 
-  // 🚨 Buyer Action: Freeze the Countdown Clock (File Dispute)
-  const handleToggleDispute = async () => {
-    try {
-      setLoading(true);
-      const provider = new ethers.BrowserProvider(window.ethereum!);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-      const tx = await contract.toggleDispute(gigId);
-      await tx.wait();
-
-      // Fetch buyer profile metrics to increment their total disputes filed count in Supabase
-      const { data: profile } = await supabase.from('profiles').select('total_disputes_filed').eq('wallet_address', userWallet).single();
-      await supabase.from('profiles').update({ total_disputes_filed: (profile?.total_disputes_filed || 0) + 1 }).eq('wallet_address', userWallet);
-
-      // Flag the live chat thread for administrative attention
-      await supabase.from('marketplace_chats').insert({
-        gig_id: gigId,
-        sender: 'system',
-        message: "🚨 CRITICAL DISPUTE FILED: The escrow clock has been locked by the buyer. Photo evidence tools are now unrestricted. Admin team notified."
-      });
-
-      alert("Dispute registered. Escrow timeline successfully frozen.");
-      connectAndLoadData();
-    } catch (err) {
-      console.error(err);
-      setLoading(false);
-    }
-  };
-
-  // ⏳ Seller Action: Claim Funds after 14-day silence
-  const handleClaimExpiredEscrow = async () => {
-    try {
-      setLoading(true);
-      const provider = new ethers.BrowserProvider(window.ethereum!);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-      const tx = await contract.claimExpiredEscrow(gigId);
-      await tx.wait();
-
-      // Penalty Module: Increment the buyer's ghosted behavior score metric in Supabase
-      const { data: profile } = await supabase.from('profiles').select('times_ghosted_seller').eq('wallet_address', escrow!.buyer).single();
-      await supabase.from('profiles').update({ times_ghosted_seller: (profile?.times_ghosted_seller || 0) + 1 }).eq('wallet_address', escrow!.buyer);
-
-      alert("14-Day window complete. Funds safely extracted autonomously.");
-      connectAndLoadData();
-    } catch (err) {
-      console.error(err);
-      setLoading(false);
-    }
-  };
-
-  // Calculate Remaining Time-Lock
-  const getRemainingTime = () => {
-    if (!escrow || escrow.trackingSubmittedAt === 0) return 0;
-    const expirationTime = (escrow.trackingSubmittedAt + (14 * 24 * 60 * 60)) * 1000; // 14 days in ms
-    const diff = expirationTime - Date.now();
-    return diff > 0 ? Math.ceil(diff / (1000 * 60 * 60 * 24)) : 0;
-  };
-
-  if (loading) return <div className="text-center p-12 font-mono text-cyan-400">Syncing BaseVault Escrow Streams...</div>;
-  
-  if (isSuspended) {
+  if (id) {
+    const activeIndexItem = listings.find(l => l.id === Number(id));
     return (
-      <div className="max-w-xl mx-auto my-12 bg-red-950/80 border border-red-500 rounded-lg p-8 font-mono text-center">
-        <h1 className="text-2xl font-black text-red-500 mb-4">🚨 ACCESS DENIED</h1>
-        <p className="text-red-200 text-sm leading-relaxed">
-          Your public wallet address has been flagged and suspended for repeated escrow violations (habitual failure to report received items or frivolous dispute filing).
-        </p>
+      <div className="min-h-screen bg-black text-green-400 p-6 font-mono flex flex-col justify-between">
+        <div className="border border-green-800 p-6 max-w-2xl mx-auto w-full bg-neutral-950 rounded shadow-lg shadow-green-900/10">
+          <div className="border-b border-green-800 pb-4 mb-4 flex justify-between items-center">
+            <span className="font-bold text-lg">ARTICLE_STATION // NODE_ID #{id}</span>
+            <span className="text-xs px-2 py-0.5 border border-green-500 rounded animate-pulse">LIVE DATA</span>
+          </div>
+          <div className="space-y-2 text-sm text-slate-300">
+            <div><span className="text-green-500 font-bold">Contract Deployment:</span> {VAULT_CONTRACT_ADDRESS}</div>
+            <div><span className="text-green-500 font-bold">Vault Deposit:</span> {activeIndexItem?.price || "0.0"} ETH</div>
+            <div><span className="text-green-500 font-bold">Seller Wallet:</span> {activeIndexItem?.seller || "SYNCING NODE LAYER..."}</div>
+            <div><span className="text-green-500 font-bold">Escrow Status:</span> <span className="text-white bg-green-900 px-1 font-bold">{activeIndexItem?.status || "ACTIVE_ESCROW"}</span></div>
+            <div><span className="text-green-500 font-bold">Tracking Code:</span> {activeIndexItem?.cleanFileUrl ? "CIPHER_MANIFEST_ATTACHED" : "AWAITING_PRODUCTION_HANDOFF"}</div>
+          </div>
+          <div className="mt-8 pt-4 border-t border-green-800 flex justify-between items-center">
+            <button onClick={() => window.location.href = '/'} className="text-neutral-500 hover:text-white transition text-xs">
+              ← Return To Main Dashboard
+            </button>
+            {activeIndexItem?.status === 'Active' && (
+              <button onClick={() => handleBuyerReleaseGigEscrow(Number(id))} className="bg-green-500 text-black font-bold px-4 py-2 rounded text-xs hover:bg-green-400 transition tracking-wider">
+                Confirm Receipt & Release Funds
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
 
-  if (!escrow) return <div className="text-center font-mono text-red-400">Vault position not found.</div>;
-
   return (
-    <div className="max-w-4xl mx-auto p-6 font-mono bg-black text-white selection:bg-cyan-500 min-h-screen">
-      {/* Header Matrix */}
-      <div className="border-b border-zinc-800 pb-4 mb-6">
-        <h1 className="text-xl font-bold tracking-tight text-zinc-400">VAULT_STATION // ITEM_ID #{gigId}</h1>
-        <p className="text-xs text-zinc-600 mt-1">Contract Deployment: {CONTRACT_ADDRESS}</p>
-      </div>
-
-      {/* Warning Banners Section */}
-      {userRole === 'buyer' && escrow.status === 1 && (
-        <div className="bg-amber-950/40 border border-amber-500/50 rounded-lg p-4 mb-6 text-amber-200 text-xs">
-          <div className="font-bold text-amber-400 mb-1">⚠️ ESCROW ETIQUETTE RULE WARNING</div>
-          <p className="mb-2">The seller uploaded tracking. You have <span className="font-bold text-white text-sm">{getRemainingTime()} days</span> left to confirm receipt or file a dispute before automated payout occurs.</p>
-          <span className="text-zinc-400">Notice: Habitual failure to confirm received items causes account lockout parameters to toggle.</span>
+    <div className="min-h-screen p-0 m-0 w-full bg-[#0a0f1d] text-slate-100">
+      {mounted && !tosAccepted && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
+          <div className="bg-[#10172a] border border-cyan-500/30 rounded-xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+            <h3 className="text-sm font-black text-emerald-400 uppercase tracking-widest font-mono">// SECURITY ACCESS INITIALIZATION //</h3>
+            <p className="text-xs text-slate-300 leading-relaxed font-sans">
+              BaseVault Market is a decentralized, peer-to-peer open-source interface. Prohibitions protect distribution limits regarding weapons, chemical compounds, explicit pornography, or human tissues.
+            </p>
+            <button onClick={() => setTosAccepted(true)} className="w-full bg-gradient-to-r from-emerald-500 to-cyan-500 py-3 rounded text-black font-black text-xs tracking-widest uppercase">
+              Cryptographically Sign Agreement
+            </button>
+          </div>
         </div>
       )}
 
-      {userRole === 'seller' && escrow.status === 0 && (
-        <div className="bg-blue-950/40 border border-blue-500/50 rounded-lg p-4 mb-6 text-blue-200 text-xs">
-          <div className="font-bold text-blue-400 mb-1">ℹ️ PACKAGING LOGISTICS INFO</div>
-          <p>Please drop off the item at your local shipping carrier and input the tracking number below to initialize your 14-day claim window countdown.</p>
+      {mounted && isConnected && chainId !== base.id && (
+        <div className="bg-gradient-to-r from-rose-600 to-amber-600 px-4 py-2 text-center font-mono text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-3 shadow-inner text-white sticky top-0 z-50">
+          <span>⚠️ SYSTEM TERMINAL MISALIGNED: WORKSPACE DETECTED ALTERNATE LAYER SEQUENCE</span>
+          <button onClick={() => switchChain?.({ chainId: base.id })} className="bg-white text-rose-700 px-3 py-1 rounded font-black text-[9px] hover:bg-slate-100 transition-colors">
+            FORCE ALIGN BASE NETWORK
+          </button>
         </div>
       )}
 
-      {/* Transaction Summary Card */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-zinc-950 border border-zinc-800 rounded-xl p-6 mb-6">
-        <div className="space-y-3 text-sm">
-          <div><span className="text-zinc-500">Vault Deposit:</span> <span className="text-emerald-400 font-bold">{escrow.amount} ETH</span></div>
-          <div><span className="text-zinc-500">Buyer Wallet:</span> <span className="text-xs text-zinc-300">{escrow.buyer}</span></div>
-          <div><span className="text-zinc-500">Seller Wallet:</span> <span className="text-xs text-zinc-300">{escrow.seller}</span></div>
+      {mounted && txHash && !isTxConfirmed && (
+        <div className="fixed bottom-4 right-4 bg-[#11182c] border-2 border-amber-400 p-4 rounded shadow-2xl z-50 animate-pulse flex items-center gap-3 max-w-xs">
+          <div className="w-3 h-3 bg-amber-400 rounded-full animate-ping" />
+          <p className="text-[10px] font-mono font-black text-white uppercase tracking-widest">// BROADCAST PENDING: WAITING ON SEQUENCER NODE //</p>
         </div>
+      )}
 
-        <div className="space-y-3 text-sm border-t md:border-t-0 md:border-l border-zinc-800 pt-4 md:pt-0 md:pl-6">
-          <div>
-            <span className="text-zinc-500">Escrow Status:</span>{' '}
-            <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-              escrow.status === 0 ? "bg-zinc-800 text-zinc-300" :
-              escrow.status === 1 ? "bg-amber-500/20 text-amber-400" :
-              escrow.status === 2 ? "bg-red-500/20 text-red-400 animate-pulse" :
-              "bg-emerald-500/20 text-emerald-400"
-            }`}>
-              {["ACTIVE_ESCROW", "SHIPPED", "DISPUTED", "SETTLED_SUCCESS", "REFUNDED"][escrow.status]}
-            </span>
-          </div>
-          <div>
-            <span className="text-zinc-500">Tracking Code:</span>{' '}
-            <span className="text-cyan-400 font-bold">{escrow.trackingNumber || "AWAITING_SHIPMENT"}</span>
-          </div>
+      <nav className="p-4 md:p-5 border-b border-cyan-500/20 sticky top-0 bg-[#0e1424]/90 backdrop-blur-xl z-40 shadow-lg flex flex-col sm:flex-row gap-3 sm:gap-0 justify-between items-center">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl md:text-2xl font-black tracking-tighter text-white bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(34,211,153,0.4)]">
+            BASEVAULT MARKET
+          </h1>
+          <span className="text-[8px] uppercase font-bold text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/40 tracking-widest">
+            NODE OPEN_SOURCE
+          </span>
         </div>
-      </div>
-
-      {/* Core Operational Control Panels */}
-      <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6">
-        <h3 className="text-sm font-bold text-zinc-400 mb-4 tracking-widest">// CONTRACT_CONTROL_ACTIONS</h3>
         
-        {/* Seller UI Commands */}
-        {userRole === 'seller' && (
-          <div className="space-y-4">
-            {escrow.status === 0 && (
-              <div className="flex flex-col sm:flex-row gap-3">
-                <input 
-                  type="text" 
-                  placeholder="Enter Shipping Tracking Code"
-                  value={trackingInput}
-                  onChange={(e) => setTrackingInput(e.target.value)}
-                  className="flex-1 bg-black border border-zinc-800 rounded px-3 py-2 text-sm text-cyan-400 focus:outline-none focus:border-cyan-500"
-                />
-                <button onClick={handleTrackingSubmission} className="bg-cyan-600 hover:bg-cyan-500 text-black font-bold px-6 py-2 rounded text-sm transition-colors">
-                  Submit Tracking
+        <div className="flex items-center justify-center sm:justify-end gap-4 md:gap-6 text-[10px] md:text-xs font-black tracking-widest uppercase w-full sm:w-auto overflow-x-auto no-scrollbar py-1">
+          {(['browse', 'list', 'escrow_stream', 'vault_dashboard'] as const).map(tab => (
+            <button 
+              key={tab} onClick={() => setActiveTab(tab)} 
+              className={`transition-all whitespace-nowrap relative py-1 ${activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}`}
+            >
+              {tab === 'escrow_stream' ? 'Gigs Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
+            </button>
+          ))}
+          <div className="h-4 w-[1px] bg-slate-800" />
+          
+          {mounted && isConnected ? (
+            <button onClick={() => disconnect()} className="px-3 py-1.5 rounded bg-[#131b30] text-emerald-400 border border-cyan-500/25 truncate max-w-[140px] font-mono text-[11px]">
+              {address?.slice(0, 6)}...{address?.slice(-4)} [OUT]
+            </button>
+          ) : (
+            <div className="flex gap-1.5 shrink-0">
+              {mounted && connectors.slice(0, 2).map((connector) => (
+                <button key={connector.uid} onClick={() => connect({ connector })} className="px-2.5 py-1 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30 font-bold text-[10px] uppercase">
+                  {connector.name.replace('Wallet', '')}
                 </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </nav>
+
+      {activeTab === 'browse' && (
+        <div className="max-w-7xl mx-auto p-4 md:p-8 relative z-10">
+          <div className="mb-6 border-l-4 border-cyan-400 pl-3 md:pl-4">
+            <h1 className="text-2xl md:text-3xl font-black text-white tracking-tighter uppercase">Index Registry</h1>
+            <p className="text-slate-400 text-xs mt-0.5">Advanced structural system for verified decentralized settlement nodes.</p>
+          </div>
+          <div className="w-full max-w-xl mb-6">
+            <input type="text" placeholder="// SEARCH INDEX LEDGER CATEGORIES..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-3.5 bg-[#11182c] border border-cyan-500/30 focus:border-emerald-400 rounded outline-none text-xs text-white font-mono tracking-wider transition-all" />
+          </div>
+          <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar">
+            {(['all', 'physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map((tab) => (
+              <button key={tab} onClick={() => setBrowseSubTab(tab)} className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
+            ))}
+          </div>
+
+          {listings.length === 0 ? (
+            <div className="border border-dashed border-slate-800 rounded-xl p-12 text-center text-slate-600 font-mono text-xs">// NO ACTIVE REGISTRY ENTRIES LOADED FROM NODE //</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {listings.filter(i => (browseSubTab === 'all' || i.type === browseSubTab) && (i.title.toLowerCase().includes(searchTerm.toLowerCase()) || i.category.toLowerCase().includes(searchTerm.toLowerCase()))).map(item => (
+                <div key={item.id} onClick={() => { setSelectedItem(item); setCurrentImageIndex(0); }} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer hover:bg-[#141d36] transition-all duration-300 flex flex-col justify-between shadow-md">
+                  <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
+                    <img src={item.images[0]} alt="" className="w-full h-full object-cover opacity-90" />
+                    <span className="absolute bottom-2 left-2 bg-[#0e1424]/90 backdrop-blur-md px-2.5 py-0.5 rounded text-[8px] font-black tracking-widest text-cyan-400 uppercase border border-cyan-500/20">{item.type.replace('_', ' ')}</span>
+                  </div>
+                  <div className="p-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center text-[9px] font-black tracking-wider uppercase mb-1.5 text-slate-500">
+                        <span className="truncate pr-1">{item.category}</span>
+                        <span className="text-amber-400">★ {item.rating}</span>
+                      </div>
+                      <div className="font-black text-sm text-slate-200 truncate uppercase">{item.title}</div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-800/60 flex justify-between items-end">
+                      <div>
+                        <p className="text-[9px] text-slate-500 uppercase font-black">Escrow Value</p>
+                        <p className="text-emerald-400 text-base md:text-lg font-black">{item.price} <span className="text-xs font-normal text-slate-500">ETH</span></p>
+                        <p className="text-[9px] text-slate-400 font-mono">${convertEthToUsd(item.price)} USD</p>
+                      </div>
+                      <span className="text-[9px] font-bold bg-[#090d16] text-cyan-400 px-2 py-1 rounded border border-cyan-500/20 uppercase">{item.status}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'list' && (
+        <div className="max-w-xl mx-auto p-4 md:p-8 relative z-10">
+          <div className="mb-6 border-l-4 border-cyan-400 pl-3">
+            <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">List Asset Node</h1>
+          </div>
+          <form onSubmit={handleCreateListing} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
+            <div className="grid grid-cols-3 gap-2">
+              {(['physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map(type => (
+                <button key={type} type="button" onClick={() => setFormType(type)} className={`py-2.5 rounded font-black uppercase text-[9px] border ${formType === type ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>{type.replace('_', ' ')}</button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Asset System Title</label>
+                <input type="text" required placeholder="GIG_PERFORMANCE_CODE" value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-white font-mono uppercase" />
+              </div>
+              <div>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Operational Classification</label>
+                <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
+                  {formType === 'physical_asset' && itemCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
+                  {formType === 'smart_bounty' && bountyCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
+                  {formType === 'tokenized_nft' && nftCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Base Registry Cost (ETH)</label>
+                <div className="relative">
+                  <input type="number" step="0.0001" required placeholder="0.00" value={formPrice} onChange={e => setFormPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono font-bold text-emerald-400" />
+                  <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ {convertEthToUsd(formPrice)}</div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout Value (ETH)</label>
+                <input type="number" step="0.0001" placeholder="0.00" value={formBuyNowPrice} onChange={e => setFormBuyNowPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono text-slate-400" />
+              </div>
+            </div>
+
+            {formPrice && parseFloat(formPrice) > 0 && (
+              <div className="p-3 bg-[#090d16] border border-cyan-500/10 rounded font-mono text-[9px] space-y-1 text-slate-400">
+                <p className="text-cyan-400 font-black">// CONTRACT DISBURSEMENT SPLIT BREAKDOWN (4% PLATFORM CUT)</p>
+                <p>Seller Net Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice).sellerCut} ETH</span> [${calculateMarketplaceTake(formPrice).sellerUsd} USD]</p>
+                <p>Platform Protocol Fee: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice).platformCut} ETH</span> [${calculateMarketplaceTake(formPrice).platformUsd} USD]</p>
               </div>
             )}
 
-            {escrow.status === 1 && (
+            <div>
+              <textarea rows={2} placeholder="SPECIFY TECHNICAL CONDITIONS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
+            </div>
+
+            <button type="submit" disabled={isTxPending || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
+              {chainId !== base.id ? '// WIREFLOW MISALIGNED - SWITCH TO BASE //' : isTxPending ? '// WAITING ON SEQUENCER...' : 'Broadcast Registry Transaction'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {activeTab === 'escrow_stream' && (
+        <div className="max-w-7xl mx-auto p-4 md:p-6 relative z-10">
+          <div className="mb-6 border-l-4 border-cyan-400 pl-3">
+            <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Gigs Escrow Stream</h1>
+            <p className="text-slate-400 text-xs">Decentralized asset pipeline and real-time transaction telemetry workspace controls.</p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="lg:col-span-7 xl:col-span-8 space-y-3">
+              {listings.filter(i => i.type === 'smart_bounty').length === 0 ? (
+                <div className="border border-dashed border-slate-800 rounded-lg p-8 text-center text-slate-600 font-mono text-xs">// NO ACTIVE SERVICE AGREEMENTS DETECTED ON SYSTEM //</div>
+              ) : (
+                listings.filter(i => i.type === 'smart_bounty').map(gig => (
+                  <div key={gig.id} className={`p-4 md:p-5 rounded-xl border transition-all duration-300 ${activeChatGigId === gig.id ? 'bg-[#121a2e] border-blue-500/50 shadow-md shadow-blue-500/5' : 'bg-[#10172a] border-slate-800/80'}`}>
+                    <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+                      <div className="flex-1">
+                        <span className={`text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border ${gig.escrowReleased ? 'bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'bg-amber-950 text-amber-400 border-amber-500/20'}`}>
+                          {gig.escrowReleased ? 'PAYOUT RELEASED' : 'ESCROW FUNDS LOCKED'}
+                        </span>
+                        <h3 className="text-base font-black text-white mt-2 uppercase tracking-tight">{gig.title}</h3>
+                        <p className="text-xs text-slate-400 font-mono mt-1">Value Allocation: <span className="text-emerald-400 font-bold">{gig.price} ETH</span> [${convertEthToUsd(gig.price)} USD]</p>
+                      </div>
+                      <button onClick={() => setActiveChatGigId(gig.id)} className={`text-[10px] font-black tracking-wider px-3 py-2 rounded uppercase font-sans border transition ${activeChatGigId === gig.id ? 'bg-blue-600 text-white border-transparent shadow' : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'}`}>
+                        {activeChatGigId === gig.id ? 'Channel Open' : 'Connect Channel'}
+                      </button>
+                    </div>
+
+                    {mounted && address?.toLowerCase() === gig.seller.toLowerCase() && !gig.escrowReleased && (
+                      <div className="mt-4 p-3.5 bg-[#090d16] border border-cyan-500/10 rounded space-y-3">
+                        <p className="text-[9px] font-black text-cyan-400 font-mono">// WORK PRODUCTION PORTAL: DEPLOY CODE MANIFEST</p>
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                          <label className="flex-1 bg-[#10172a] border border-slate-800 p-2.5 rounded text-[11px] text-center font-mono cursor-pointer text-slate-400 hover:border-cyan-500 transition-colors">
+                            {isUploadingToIpfs[gig.id] ? "🧬 DEPLOYING RECONSTRUCTION LINK TO IPFS..." : deliveryPayloads[gig.id] ? "✅ CODE ARCHIVE STAGED" : "SELECT PRODUCTION COMPLETED ARTIFACT ARCHIVE (.ZIP)"}
+                            <input type="file" className="hidden" disabled={isUploadingToIpfs[gig.id]} onChange={e => e.target.files?.[0] && handleFreelancerSandboxUpload(gig.id, e.target.files[0])} />
+                          </label>
+                          {deliveryPayloads[gig.id] && (
+                            <button onClick={() => handleBroadcastDeliveryProof(gig.id)} disabled={chainId !== base.id} className="bg-emerald-400 text-black font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded shadow hover:bg-emerald-300 transition disabled:opacity-40">Commit Payload</button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {gig.watermarkedFilePreview && (
+                      <div className="mt-4 p-3 bg-[#090d16] border border-slate-800/80 rounded">
+                        <div className="p-3 bg-[#10172a] rounded border border-dashed border-slate-800 text-center font-mono text-[10px]">
+                          {!gig.escrowReleased ? (
+                            <span className="text-amber-400 animate-pulse">🔒 FILES ENCRYPTED IN ESCROW STORAGE. RELEASING TRANSACTION CONTRACT UNLOCKS RECONSTRUCTION SIGNATURE KEY.</span>
+                          ) : (
+                            <div className="flex justify-between items-center text-xs px-1">
+                              <span className="text-emerald-400 font-bold">🔓 CONTRACT CLOSED:</span>
+                              <a href={gig.cleanFileUrl} target="_blank" rel="noreferrer" className="text-blue-400 font-black underline hover:text-blue-300 transition">DOWNLOAD_CLEAR_SOURCE.zip</a>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* UPGRADED PRODUCTION LEVEL REAL-TIME CHAT PANEL */}
+            <div className="lg:col-span-5 xl:col-span-4 bg-[#10172a] border border-slate-800/80 rounded-2xl h-[520px] flex flex-col justify-between shadow-2xl overflow-hidden">
+              <div className="p-4 bg-slate-950/40 border-b border-slate-800/60 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <span className={`w-1.5 h-1.5 rounded-full ${activeChatGigId ? 'bg-emerald-400 animate-pulse' : 'bg-slate-700'}`} />
+                  <h3 className="font-black text-[10px] uppercase text-slate-300 tracking-wider font-mono">P2P Escrow Comm Line</h3>
+                </div>
+                {activeChatGigId && <span className="text-[9px] font-mono font-bold text-slate-500">ID: #{activeChatGigId}</span>}
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-800/60">
+                {!activeChatGigId ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-600 font-mono">
+                    <span className="text-xl mb-2">📡</span>
+                    <p className="text-[10px] uppercase tracking-wider">// STANDBY SYSTEM //</p>
+                    <p className="text-[9px] mt-1 text-slate-600 lowercase">Link communication stream to mount network sockets</p>
+                  </div>
+                ) : chatLogs.length === 0 ? (
+                  <div className="flex items-center justify-center h-full text-center p-6 font-mono text-[10px] text-slate-500 italic">
+                    // Channel initialized. Begin cryptographic negotiation sequence...
+                  </div>
+                ) : (
+                  chatLogs.map((msg, idx) => {
+                    const cleanSender = msg.sender.toLowerCase();
+                    const isUser = address && cleanSender === address.toLowerCase();
+                    const renderingLabel = cleanSender.slice(0, 6) + "..." + cleanSender.slice(-4);
+
+                    return (
+                      <div key={idx} className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs border shadow-sm font-sans ${
+                          isUser 
+                            ? 'bg-blue-600/10 text-blue-100 border-blue-500/20 rounded-br-none' 
+                            : 'bg-slate-950/60 text-slate-200 border-slate-800/60 rounded-bl-none'
+                        }`}>
+                          <p className={`text-[7px] font-mono font-black uppercase mb-1 tracking-wider ${isUser ? 'text-blue-400 text-right' : 'text-slate-500'}`}>
+                            {renderingLabel} {isUser && '(YOU)'}
+                          </p>
+                          <p className="break-words whitespace-pre-wrap leading-relaxed text-slate-200 selection:bg-blue-500/30">
+                            {msg.text}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={chatEndRef} />
+              </div>
+
+              {activeChatGigId && (
+                <form 
+                  onSubmit={(e) => { e.preventDefault(); sendChatMessage(activeChatGigId); }}
+                  className="p-3 bg-slate-950/40 border-t border-slate-800/60 flex gap-2"
+                >
+                  <input 
+                    type="text" 
+                    placeholder="Broadcast confidential data string..." 
+                    value={chatMessage} 
+                    onChange={e => setChatMessage(e.target.value)} 
+                    className="flex-1 bg-slate-950 border border-slate-800 text-xs p-2.5 rounded-xl outline-none text-white font-mono focus:border-slate-700 transition" 
+                  />
+                  <button 
+                    type="submit"
+                    className="bg-slate-100 hover:bg-white text-black font-black px-4 rounded-xl text-[10px] uppercase transition-colors shadow shrink-0 font-sans tracking-wider"
+                  >
+                    Send
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'vault_dashboard' && (
+        <div className="max-w-4xl mx-auto p-4 md:p-8 relative z-10">
+          {mounted && isConnected && address?.toLowerCase() === DEVELOPER_ADMIN_ADDRESS.toLowerCase() && (
+            <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-3">
               <div>
-                {getRemainingTime() === 0 ? (
-                  <button onClick={handleClaimExpiredEscrow} className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-3 rounded text-sm transition-colors">
-                    Claim Expired Escrow Funds (Autonomy Mode)
+                <p className="text-[10px] text-emerald-400 font-black uppercase font-mono">// ADMINISTRATIVE ROOT SIGNATURE CONFIRMED BIPPASSED //</p>
+                <p className="text-xs text-slate-400 font-mono mt-1">Contract Accumulation Balances: <span className="text-emerald-400 font-bold">{contractBalance.data ? formatEther(contractBalance.data.value) : '0.00'} ETH</span></p>
+              </div>
+              <button onClick={handleAdminWithdrawLiquidity} disabled={chainId !== base.id} className="bg-emerald-500 text-black font-black text-xs px-5 py-3 rounded uppercase tracking-wider disabled:opacity-40">Execute Vault Payout</button>
+            </div>
+          )}
+
+          <div className="bg-[#10172a] border border-slate-800 p-4 rounded-lg text-xs space-y-4">
+            <h3 className="text-[10px] font-black uppercase tracking-widest font-mono text-cyan-400">// GIG MANAGEMENT ORDERS (4% ESCROW ENFORCED)</h3>
+            {listings.filter(i => i.type === 'smart_bounty').map(gig => (
+              <div key={gig.id} className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <h4 className="font-black text-white uppercase">{gig.title}</h4>
+                  <span className="text-emerald-400 font-bold font-mono">{gig.price} ETH</span>
+                </div>
+                {!gig.escrowReleased ? (
+                  <button onClick={() => handleBuyerReleaseGigEscrow(gig.id)} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 text-black font-black py-2 rounded text-[10px] uppercase tracking-widest disabled:opacity-40">
+                    RELEASE_VAULT_ESCROW_FUNDS (Process 4% Split)
                   </button>
                 ) : (
-                  <div className="text-center text-zinc-500 text-xs py-2 bg-zinc-900 rounded border border-zinc-800">
-                    🔒 Time-lock window active. Automated payout opens in <span className="text-amber-400 font-bold">{getRemainingTime()} days</span> if no dispute is flagged.
-                  </div>
+                  <p className="text-[10px] text-emerald-500 font-mono font-black">// TRANSACTION MATRIX CLOSED. SETTLEMENT COMPLETE.</p>
                 )}
               </div>
-            )}
+            ))}
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Buyer UI Commands */}
-        {userRole === 'buyer' && (
-          <div className="space-y-4">
-            {(escrow.status === 0 || escrow.status === 1) && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button onClick={handleManualRelease} className="bg-emerald-600 hover:bg-emerald-500 text-black font-bold py-3 rounded text-sm transition-colors">
-                  Confirm Receipt & Release Funds
-                </button>
-                {escrow.status === 1 && (
-                  <button onClick={handleToggleDispute} className="bg-red-950 hover:bg-red-900 text-red-400 border border-red-800 font-bold py-3 rounded text-sm transition-colors">
-                    🚨 Open Dispute / Freeze Clock
-                  </button>
-                )}
+      {selectedItem && (
+        <div className="fixed inset-0 bg-[#070a12]/95 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setSelectedItem(null)}>
+          <div className="bg-[#10172a] border border-slate-800 rounded-lg p-5 max-w-2xl w-full space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="relative bg-[#090d16] rounded p-2 border border-slate-800 flex items-center justify-center min-h-[220px]">
+              <img src={selectedItem.images[currentImageIndex]} alt="" className="max-h-[260px] object-contain rounded" />
+            </div>
+            <div className="flex justify-between items-end font-mono">
+              <div>
+                <span className="text-[9px] font-black text-cyan-400 uppercase bg-cyan-950/60 px-2.5 py-0.5 rounded border border-cyan-500/30">{selectedItem.category}</span>
+                <h2 className="text-lg font-black text-white mt-1.5 uppercase">{selectedItem.title}</h2>
               </div>
-            )}
+              <div className="text-right">
+                <p className="text-xl text-emerald-400 font-black">{selectedItem.price} <span className="text-xs font-normal text-zinc-500">ETH</span></p>
+                <p className="text-[10px] text-slate-400 font-bold">≈ {convertEthToUsd(selectedItem.price)} USD</p>
+              </div>
+            </div>
+            <p className="text-slate-300 text-[11px] bg-[#090d16] p-3 rounded border border-slate-800 font-mono uppercase">{selectedItem.description}</p>
+            <div className="pt-3 border-t border-slate-800 flex flex-col gap-2">
+              <form onSubmit={handlePlaceBid} className="flex gap-1.5">
+                <input type="number" step="0.001" required placeholder={`// LOCK BID ESCROW CORNER VALUE > ${selectedItem.price}`} value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="flex-1 bg-[#090d16] border border-slate-800 p-2.5 rounded text-[11px] font-bold text-white font-mono outline-none" />
+                <button type="submit" disabled={chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">LOCK_ESCROW</button>
+              </form>
+              {selectedItem.buyNowPrice && (
+                <button onClick={handleBuyNow} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">SETTLE_IMMEDIATE_BUYOUT ({selectedItem.buyNowPrice} ETH)</button>
+              )}
+            </div>
           </div>
-        )}
-
-        {/* Guest View / Inactive */}
-        {userRole === 'none' && (
-          <p className="text-xs text-zinc-600 text-center py-4">Your current address profile context acts as a read-only witness observer to this escrow arrangement.</p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
