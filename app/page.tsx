@@ -2,11 +2,11 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, Suspense, useRef } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { parseEther, formatEther, createPublicClient, http } from 'viem';
 import { base } from 'wagmi/chains';
-import { supabase } from '../lib/supabaseClient';
-import { useSearchParams } from 'next/navigation';
+import { supabase } from '../lib/supabaseClient'; // Real-time client module
+import { useSearchParams } from 'next/navigation'; // Next.js App Router query handler
 import { 
   useAccount, 
   useConnect, 
@@ -50,9 +50,10 @@ interface Listing {
 const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
 const VAULT_CONTRACT_ADDRESS = "0x4bEa1744818C8B0Bb744e3524670F27253AE7aA5";
 
+// Next.js App Router requires searchParams to be wrapped in a Suspense boundary
 export default function Home() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">// INITIALIZING ACTIVE BASEVAULT INFRASTRUCTURE...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">INITIALIZING INTERFACE TERMINAL...</div>}>
       <MarketplaceContent />
     </Suspense>
   );
@@ -67,6 +68,7 @@ function MarketplaceContent() {
   const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const contractBalance = useBalance({ address: VAULT_CONTRACT_ADDRESS });
 
+  // 📡 ROUTING DECODER: Pull identifier straight out of the URL path string
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
 
@@ -82,11 +84,12 @@ function MarketplaceContent() {
   const [deliveryPayloads, setDeliveryPayloads] = useState<Record<number, string>>({});
   const [ethUsdRate, setEthUsdRate] = useState<number>(3100); 
 
+  // Live Real-Time Telemetry Setup
   const [activeChatGigId, setActiveChatGigId] = useState<number | null>(null);
   const [chatMessage, setChatMessage] = useState('');
-  const [chatLogs, setChatLogs] = useState<Array<{sender: string, text: string, created_at?: string}>>([]);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [chatLogs, setChatLogs] = useState<Array<{sender: string, text: string}>>([]);
 
+  // Form States
   const [formType, setFormType] = useState<'physical_asset' | 'smart_bounty' | 'tokenized_nft'>('physical_asset');
   const [formTitle, setFormTitle] = useState('');
   const [formCategory, setFormCategory] = useState('Sneakers & Apparel');
@@ -100,29 +103,27 @@ function MarketplaceContent() {
 
   const [listings, setListings] = useState<Listing[]>([]);
   const [mounted, setMounted] = useState(false);
-  
   useEffect(() => { setMounted(true); }, []);
 
+  // Sync historical messages and open real-time cross-machine sockets
   useEffect(() => {
     if (!activeChatGigId) return;
 
+    // 1. Fetch historical database state for this bounty channel
     const fetchChatHistory = async () => {
       const { data, error } = await supabase
         .from('marketplace_chats')
-        .select('sender, message_text, created_at')
+        .select('sender, message_text')
         .eq('gig_id', activeChatGigId)
         .order('id', { ascending: true });
 
       if (!error && data) {
-        setChatLogs(data.map(m => ({ 
-          sender: m.sender.toLowerCase(), 
-          text: m.message_text,
-          created_at: m.created_at 
-        })));
+        setChatLogs(data.map(m => ({ sender: m.sender, text: m.message_text })));
       }
     };
     fetchChatHistory();
 
+    // 2. Open real-time channel subscription to stream updates instantly across devices
     const telemetryChannel = supabase
       .channel(`gig_telemetry_${activeChatGigId}`)
       .on('postgres_changes', { 
@@ -132,10 +133,7 @@ function MarketplaceContent() {
         filter: `gig_id=eq.${activeChatGigId}`
       }, (payload) => {
         const newMsg = payload.new;
-        setChatLogs(prev => {
-          if (prev.some(m => m.created_at === newMsg.created_at && m.text === newMsg.message_text)) return prev;
-          return [...prev, { sender: newMsg.sender.toLowerCase(), text: newMsg.message_text, created_at: newMsg.created_at }];
-        });
+        setChatLogs(prev => [...prev, { sender: newMsg.sender, text: newMsg.message_text }]);
       })
       .subscribe();
 
@@ -144,10 +142,7 @@ function MarketplaceContent() {
     };
   }, [activeChatGigId]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatLogs]);
-
+  // Price Feed Oracle
   useEffect(() => {
     const fetchCurrentPriceFeed = async () => {
       try {
@@ -163,6 +158,7 @@ function MarketplaceContent() {
     return () => clearInterval(priceTickerInterval);
   }, []);
 
+  // Contract Read Methods
   const { data: totalListingsCount, refetch: reloadContractCount } = useReadContract({
     address: VAULT_CONTRACT_ADDRESS,
     abi: MARKETPLACE_ABI,
@@ -333,39 +329,43 @@ function MarketplaceContent() {
 
   const sendChatMessage = async (gigId: number) => {
     if (!chatMessage.trim() || !address) return alert("Connect wallet to broadcast telemetry.");
-    const currentMessageString = chatMessage.trim();
-    setChatMessage(''); 
-
+    
+    const senderLabel = address.slice(0,6) + "..." + address.slice(-4);
+    
     const { error } = await supabase
       .from('marketplace_chats')
-      .insert([{ 
-        gig_id: gigId, 
-        sender: address.toLowerCase(), 
-        message_text: currentMessageString 
-      }]);
+      .insert([
+        { gig_id: gigId, sender: senderLabel, message_text: chatMessage }
+      ]);
 
     if (error) {
       console.error("Telemetry distribution breakdown:", error);
-      setChatMessage(currentMessageString); 
+    } else {
+      setChatMessage('');
     }
   };
 
+  // --------------------------------------------------------------------
+  // 🧭 INTERCEPT PANEL: Triggers instantly if ?id= query is in browser path
+  // --------------------------------------------------------------------
   if (id) {
     const activeIndexItem = listings.find(l => l.id === Number(id));
     return (
       <div className="min-h-screen bg-black text-green-400 p-6 font-mono flex flex-col justify-between">
         <div className="border border-green-800 p-6 max-w-2xl mx-auto w-full bg-neutral-950 rounded shadow-lg shadow-green-900/10">
           <div className="border-b border-green-800 pb-4 mb-4 flex justify-between items-center">
-            <span className="font-bold text-lg">ARTICLE_STATION // NODE_ID #{id}</span>
+            <span className="font-bold text-lg">VAULT_STATION // ITEM_ID #{id}</span>
             <span className="text-xs px-2 py-0.5 border border-green-500 rounded animate-pulse">LIVE DATA</span>
           </div>
+          
           <div className="space-y-2 text-sm text-slate-300">
             <div><span className="text-green-500 font-bold">Contract Deployment:</span> {VAULT_CONTRACT_ADDRESS}</div>
             <div><span className="text-green-500 font-bold">Vault Deposit:</span> {activeIndexItem?.price || "0.0"} ETH</div>
-            <div><span className="text-green-500 font-bold">Seller Wallet:</span> {activeIndexItem?.seller || "SYNCING NODE LAYER..."}</div>
+            <div><span className="text-green-500 font-bold">Seller Wallet:</span> {activeIndexItem?.seller || "SYNCING REGISTERED NODE..."}</div>
             <div><span className="text-green-500 font-bold">Escrow Status:</span> <span className="text-white bg-green-900 px-1 font-bold">{activeIndexItem?.status || "ACTIVE_ESCROW"}</span></div>
-            <div><span className="text-green-500 font-bold">Tracking Code:</span> {activeIndexItem?.cleanFileUrl ? "CIPHER_MANIFEST_ATTACHED" : "AWAITING_PRODUCTION_HANDOFF"}</div>
+            <div><span className="text-green-500 font-bold">Tracking Code:</span> {activeIndexItem?.cleanFileUrl ? "CIPHER_MANIFEST_ATTACHED" : "AWAITING_SHIPMENT"}</div>
           </div>
+
           <div className="mt-8 pt-4 border-t border-green-800 flex justify-between items-center">
             <button onClick={() => window.location.href = '/'} className="text-neutral-500 hover:text-white transition text-xs">
               ← Return To Main Dashboard
@@ -381,8 +381,12 @@ function MarketplaceContent() {
     );
   }
 
+  // --------------------------------------------------------------------
+  // 🏆 MAIN SITE REGISTRY INTERFACE (Loads safely on root domain path)
+  // --------------------------------------------------------------------
   return (
     <div className="min-h-screen p-0 m-0 w-full bg-[#0a0f1d] text-slate-100">
+      {/* TOS ACCESS PORTAL */}
       {mounted && !tosAccepted && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
           <div className="bg-[#10172a] border border-cyan-500/30 rounded-xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
@@ -397,6 +401,7 @@ function MarketplaceContent() {
         </div>
       )}
 
+      {/* RUNTIME ALIGNMENT BANNER */}
       {mounted && isConnected && chainId !== base.id && (
         <div className="bg-gradient-to-r from-rose-600 to-amber-600 px-4 py-2 text-center font-mono text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-3 shadow-inner text-white sticky top-0 z-50">
           <span>⚠️ SYSTEM TERMINAL MISALIGNED: WORKSPACE DETECTED ALTERNATE LAYER SEQUENCE</span>
@@ -406,6 +411,7 @@ function MarketplaceContent() {
         </div>
       )}
 
+      {/* TRANSACTION HUD */}
       {mounted && txHash && !isTxConfirmed && (
         <div className="fixed bottom-4 right-4 bg-[#11182c] border-2 border-amber-400 p-4 rounded shadow-2xl z-50 animate-pulse flex items-center gap-3 max-w-xs">
           <div className="w-3 h-3 bg-amber-400 rounded-full animate-ping" />
@@ -413,12 +419,13 @@ function MarketplaceContent() {
         </div>
       )}
 
+      {/* NAVBAR */}
       <nav className="p-4 md:p-5 border-b border-cyan-500/20 sticky top-0 bg-[#0e1424]/90 backdrop-blur-xl z-40 shadow-lg flex flex-col sm:flex-row gap-3 sm:gap-0 justify-between items-center">
         <div className="flex items-center gap-2">
           <h1 className="text-xl md:text-2xl font-black tracking-tighter text-white bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(34,211,153,0.4)]">
             BASEVAULT MARKET
           </h1>
-          <span className="text-[8px] uppercase font-bold text-cyan-300 bg-cyan-955/60 px-2 py-0.5 rounded border border-cyan-500/40 tracking-widest">
+          <span className="text-[8px] uppercase font-bold text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/40 tracking-widest">
             NODE OPEN_SOURCE
           </span>
         </div>
@@ -429,7 +436,7 @@ function MarketplaceContent() {
               key={tab} onClick={() => setActiveTab(tab)} 
               className={`transition-all whitespace-nowrap relative py-1 ${activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}`}
             >
-              {tab === 'escrow_stream' ? 'Gigs Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
+              {tab === 'escrow_stream' ? 'Bounties Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
             </button>
           ))}
           <div className="h-4 w-[1px] bg-slate-800" />
@@ -450,282 +457,322 @@ function MarketplaceContent() {
         </div>
       </nav>
 
-      {activeTab === 'browse' && (
-        <div className="max-w-7xl mx-auto p-4 md:p-8 relative z-10">
-          <div className="mb-6 border-l-4 border-cyan-400 pl-3 md:pl-4">
-            <h1 className="text-2xl md:text-3xl font-black text-white tracking-tighter uppercase">Index Registry</h1>
-            <p className="text-slate-400 text-xs mt-0.5">Advanced structural system for verified decentralized settlement nodes.</p>
-          </div>
-          <div className="w-full max-w-xl mb-6">
-            <input type="text" placeholder="// SEARCH INDEX LEDGER CATEGORIES..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-3.5 bg-[#11182c] border border-cyan-500/30 focus:border-emerald-400 rounded outline-none text-xs text-white font-mono tracking-wider transition-all" />
-          </div>
-          <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar">
-            {(['all', 'physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map((tab) => (
-              <button key={tab} onClick={() => setBrowseSubTab(tab)} className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
-            ))}
-          </div>
+      {/* TWO COLUMN MASTER GRID VIEW WRAPPER */}
+      <div className="max-w-7xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-4 gap-6 relative z-10">
+        
+        {/* LEFT COMPONENT COLUMN (Spans 3 Columns) */}
+        <div className="lg:col-span-3 space-y-6">
 
-          {listings.length === 0 ? (
-            <div className="border border-dashed border-slate-800 rounded-xl p-12 text-center text-slate-600 font-mono text-xs">// NO ACTIVE REGISTRY ENTRIES LOADED FROM NODE //</div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {listings.filter(i => (browseSubTab === 'all' || i.type === browseSubTab) && (i.title.toLowerCase().includes(searchTerm.toLowerCase()) || i.category.toLowerCase().includes(searchTerm.toLowerCase()))).map(item => (
-                <div key={item.id} onClick={() => { setSelectedItem(item); setCurrentImageIndex(0); }} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer hover:bg-[#141d36] transition-all duration-300 flex flex-col justify-between shadow-md">
-                  <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
-                    <img src={item.images[0]} alt="" className="w-full h-full object-cover opacity-90" />
-                    <span className="absolute bottom-2 left-2 bg-[#0e1424]/90 backdrop-blur-md px-2.5 py-0.5 rounded text-[8px] font-black tracking-widest text-cyan-400 uppercase border border-cyan-500/20">{item.type.replace('_', ' ')}</span>
-                  </div>
-                  <div className="p-4 flex-1 flex flex-col justify-between">
-                    <div>
-                      <div className="flex justify-between items-center text-[9px] font-black tracking-wider uppercase mb-1.5 text-slate-500">
-                        <span className="truncate pr-1">{item.category}</span>
-                        <span className="text-amber-400">★ {item.rating}</span>
-                      </div>
-                      <div className="font-black text-sm text-slate-200 truncate uppercase">{item.title}</div>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-slate-800/60 flex justify-between items-end">
-                      <div>
-                        <p className="text-[9px] text-slate-500 uppercase font-black">Escrow Value</p>
-                        <p className="text-emerald-400 text-base md:text-lg font-black">{item.price} <span className="text-xs font-normal text-slate-500">ETH</span></p>
-                        <p className="text-[9px] text-slate-400 font-mono">${convertEthToUsd(item.price)} USD</p>
-                      </div>
-                      <span className="text-[9px] font-bold bg-[#090d16] text-cyan-400 px-2 py-1 rounded border border-cyan-500/20 uppercase">{item.status}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'list' && (
-        <div className="max-w-xl mx-auto p-4 md:p-8 relative z-10">
-          <div className="mb-6 border-l-4 border-cyan-400 pl-3">
-            <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">List Asset Node</h1>
-          </div>
-          <form onSubmit={handleCreateListing} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
-            <div className="grid grid-cols-3 gap-2">
-              {(['physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map(type => (
-                <button key={type} type="button" onClick={() => setFormType(type)} className={`py-2.5 rounded font-black uppercase text-[9px] border ${formType === type ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>{type.replace('_', ' ')}</button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Asset Title</label>
-                <input type="text" required placeholder="GIG_PERFORMANCE_CODE" value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-white font-mono uppercase" />
+          {/* BROWSE INDEX SUB-VIEW */}
+          {activeTab === 'browse' && (
+            <div className="space-y-6">
+              <div className="border-l-4 border-cyan-400 pl-3 md:pl-4">
+                <h1 className="text-2xl md:text-3xl font-black text-white tracking-tighter uppercase">Index Registry</h1>
+                <p className="text-slate-400 text-xs mt-0.5">Advanced structural system for verified decentralized settlement nodes.</p>
               </div>
-              <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Classification</label>
-                <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
-                  {formType === 'physical_asset' && itemCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
-                  {formType === 'smart_bounty' && bountyCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
-                  {formType === 'tokenized_nft' && nftCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
-                </select>
+
+              <div id="frame" className="w-full max-w-[728px] mb-6">
+                <iframe data-aa="2438016" src="//acceptable.a-ads.com/2438016/?size=Adaptive" className="border-0 p-0 w-full h-[90px] overflow-hidden block" />
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Escrow Value (ETH)</label>
-                <div className="relative">
-                  <input type="number" step="0.0001" required placeholder="0.00" value={formPrice} onChange={e => setFormPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono font-bold text-emerald-400" />
-                  <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ {convertEthToUsd(formPrice)}</div>
-                </div>
+              <div className="w-full max-w-xl">
+                <input type="text" placeholder="// SEARCH INDEX LEDGER CATEGORIES..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-3.5 bg-[#11182c] border border-cyan-500/30 focus:border-emerald-400 rounded outline-none text-xs text-white font-mono tracking-wider transition-all" />
               </div>
-              <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout (ETH)</label>
-                <input type="number" step="0.0001" placeholder="0.00" value={formBuyNowPrice} onChange={e => setFormBuyNowPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono text-slate-400" />
+
+              <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                {(['all', 'physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map((tab) => (
+                  <button key={tab} onClick={() => setBrowseSubTab(tab)} className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
+                ))}
               </div>
-            </div>
 
-            {formPrice && parseFloat(formPrice) > 0 && (
-              <div className="p-3 bg-[#090d16] border border-cyan-500/10 rounded font-mono text-[9px] space-y-1 text-slate-400">
-                <p className="text-cyan-400 font-black">// VAULT FEE SPLIT BREAKDOWN (4% PLATFORM LAYER)</p>
-                <p>Seller Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice).sellerCut} ETH</span> [${calculateMarketplaceTake(formPrice).sellerUsd} USD]</p>
-                <p>Platform Allocation: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice).platformCut} ETH</span> [${calculateMarketplaceTake(formPrice).platformUsd} USD]</p>
-              </div>
-            )}
-
-            <div>
-              <textarea rows={2} placeholder="SPECIFY PERFORMANCE TERMS OR ARTIFACT META STRINGS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
-            </div>
-
-            <button type="submit" disabled={isTxPending || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
-              {chainId !== base.id ? '// WIREFLOW MISALIGNED - SWITCH TO BASE //' : isTxPending ? '// WAITING ON SEQUENCER...' : 'Broadcast Registry Transaction'}
-            </button>
-          </form>
-        </div>
-      )}
-
-      {activeTab === 'escrow_stream' && (
-        <div className="max-w-7xl mx-auto p-4 md:p-6 relative z-10">
-          <div className="mb-6 border-l-4 border-cyan-400 pl-3">
-            <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Gigs Escrow Stream</h1>
-            <p className="text-slate-400 text-xs">Decentralized asset pipeline and real-time transaction telemetry workspace controls.</p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-7 xl:col-span-8 space-y-3">
-              {listings.filter(i => i.type === 'smart_bounty').length === 0 ? (
-                <div className="border border-dashed border-slate-800 rounded-lg p-8 text-center text-slate-600 font-mono text-xs">// NO ACTIVE SERVICE AGREEMENTS DETECTED ON SYSTEM //</div>
+              {listings.length === 0 ? (
+                <div className="border border-dashed border-slate-800 rounded-xl p-12 text-center text-slate-600 font-mono text-xs">// NO ACTIVE REGISTRY ENTRIES LOADED FROM NODE //</div>
               ) : (
-                listings.filter(i => i.type === 'smart_bounty').map(gig => (
-                  <div key={gig.id} className={`p-4 md:p-5 rounded-xl border transition-all duration-300 ${activeChatGigId === gig.id ? 'bg-[#121a2e] border-blue-500/50 shadow-md shadow-blue-500/5' : 'bg-[#10172a] border-slate-800/80'}`}>
-                    <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-                      <div className="flex-1">
-                        <span className={`text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border ${gig.escrowReleased ? 'bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'bg-amber-950 text-amber-400 border-amber-500/20'}`}>
-                          {gig.escrowReleased ? 'PAYOUT RELEASED' : 'ESCROW FUNDS LOCKED'}
-                        </span>
-                        <h3 className="text-base font-black text-white mt-2 uppercase tracking-tight">{gig.title}</h3>
-                        <p className="text-xs text-slate-400 font-mono mt-1">Value Allocation: <span className="text-emerald-400 font-bold">{gig.price} ETH</span> [${convertEthToUsd(gig.price)} USD]</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {listings.filter(i => (browseSubTab === 'all' || i.type === browseSubTab) && (i.title.toLowerCase().includes(searchTerm.toLowerCase()) || i.category.toLowerCase().includes(searchTerm.toLowerCase()))).map(item => (
+                    <div key={item.id} onClick={() => { setSelectedItem(item); setCurrentImageIndex(0); }} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer hover:bg-[#141d36] transition-all duration-300 flex flex-col justify-between shadow-md">
+                      <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
+                        <img src={item.images[0]} alt="" className="w-full h-full object-cover opacity-90" />
+                        <span className="absolute bottom-2 left-2 bg-[#0e1424]/90 backdrop-blur-md px-2.5 py-0.5 rounded text-[8px] font-black tracking-widest text-cyan-400 uppercase border border-cyan-500/20">{item.type.replace('_', ' ')}</span>
                       </div>
-                      <button onClick={() => setActiveChatGigId(gig.id)} className={`text-[10px] font-black tracking-wider px-3 py-2 rounded uppercase font-sans border transition ${activeChatGigId === gig.id ? 'bg-blue-600 text-white border-transparent shadow' : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'}`}>
-                        {activeChatGigId === gig.id ? 'Channel Open' : 'Connect Channel'}
-                      </button>
+                      <div className="p-4 flex-1 flex flex-col justify-between">
+                        <div>
+                          <div className="flex justify-between items-center text-[9px] font-black tracking-wider uppercase mb-1.5 text-slate-500">
+                            <span className="truncate pr-1">{item.category}</span>
+                            <span className="text-amber-400">★ {item.rating}</span>
+                          </div>
+                          <div className="font-black text-sm text-slate-200 truncate uppercase">{item.title}</div>
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-slate-800/60 flex justify-between items-end">
+                          <div>
+                            <p className="text-[9px] text-slate-500 uppercase font-black">Escrow Value</p>
+                            <p className="text-emerald-400 text-base font-black">{item.price} <span className="text-xs font-normal text-slate-500">ETH</span></p>
+                            <p className="text-[9px] text-slate-400 font-mono">${convertEthToUsd(item.price)} USD</p>
+                          </div>
+                          <span className="text-[9px] font-bold bg-[#090d16] text-cyan-400 px-2 py-1 rounded border border-cyan-500/20 uppercase">{item.status}</span>
+                        </div>
+                      </div>
                     </div>
-
-                    {mounted && address?.toLowerCase() === gig.seller.toLowerCase() && !gig.escrowReleased && (
-                      <div className="mt-4 p-3.5 bg-[#090d16] border border-cyan-500/10 rounded space-y-3">
-                        <p className="text-[9px] font-black text-cyan-400 font-mono">// WORK PRODUCTION PORTAL: DEPLOY CODE MANIFEST</p>
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                          <label className="flex-1 bg-[#10172a] border border-slate-800 p-2.5 rounded text-[11px] text-center font-mono cursor-pointer text-slate-400 hover:border-cyan-500 transition-colors">
-                            {isUploadingToIpfs[gig.id] ? "🧬 DEPLOYING TO IPFS LAYERS..." : deliveryPayloads[gig.id] ? "✅ DATA MANIFEST READY" : "SELECT PRODUCTION COMPLETED ARCHIVE (.ZIP)"}
-                            <input type="file" className="hidden" disabled={isUploadingToIpfs[gig.id]} onChange={e => e.target.files?.[0] && handleFreelancerSandboxUpload(gig.id, e.target.files[0])} />
-                          </label>
-                          {deliveryPayloads[gig.id] && (
-                            <button onClick={() => handleBroadcastDeliveryProof(gig.id)} disabled={chainId !== base.id} className="bg-emerald-400 text-black font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded shadow hover:bg-emerald-300 transition disabled:opacity-40">Commit Payload</button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {gig.watermarkedFilePreview && (
-                      <div className="mt-4 p-3 bg-[#090d16] border border-slate-800/80 rounded">
-                        <div className="p-3 bg-[#10172a] rounded border border-dashed border-slate-800 text-center font-mono text-[10px]">
-                          {!gig.escrowReleased ? (
-                            <span className="text-amber-400 animate-pulse">🔒 SECURE FILE STAGED IN ESCROW. RELEASING TRANSACTION CONTRACT UNLOCKS RECONSTRUCTION SIGNATURE LINK.</span>
-                          ) : (
-                            <div className="flex justify-between items-center text-xs px-1">
-                              <span className="text-emerald-400 font-bold">🔓 ESCROW DISBURSED:</span>
-                              <a href={gig.cleanFileUrl} target="_blank" rel="noreferrer" className="text-blue-400 font-black underline hover:text-blue-300 transition">DOWNLOAD_SOURCE.zip</a>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* LIVE REAL-TIME CHAT PANEL CONTAINER */}
-            <div className="lg:col-span-5 xl:col-span-4 bg-[#10172a] border border-slate-800/80 rounded-2xl h-[520px] flex flex-col justify-between shadow-2xl overflow-hidden">
-              <div className="p-4 bg-slate-950/40 border-b border-slate-800/60 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className={`w-1.5 h-1.5 rounded-full ${activeChatGigId ? 'bg-emerald-400 animate-pulse' : 'bg-slate-700'}`} />
-                  <h3 className="font-black text-[10px] uppercase text-slate-300 tracking-wider font-mono">P2P Escrow Comm Line</h3>
+                  ))}
                 </div>
-                {activeChatGigId && <span className="text-[9px] font-mono font-bold text-slate-500">ID: #{activeChatGigId}</span>}
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-800/60">
-                {!activeChatGigId ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-600 font-mono">
-                    <span className="text-xl mb-2">📡</span>
-                    <p className="text-[10px] uppercase tracking-wider">// STANDBY SYSTEM //</p>
-                    <p className="text-[9px] mt-1 text-slate-600 lowercase">Link channel to mount live WebSockets</p>
-                  </div>
-                ) : chatLogs.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-center p-6 font-mono text-[10px] text-slate-500 italic">
-                    // Channel open. Begin negotiation sequence below...
-                  </div>
-                ) : (
-                  chatLogs.map((msg, idx) => {
-                    const cleanSender = msg.sender.toLowerCase();
-                    const isUser = address && cleanSender === address.toLowerCase();
-                    const renderingLabel = cleanSender.slice(0, 6) + "..." + cleanSender.slice(-4);
-
-                    return (
-                      <div key={idx} className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs border shadow-sm font-sans ${
-                          isUser 
-                            ? 'bg-blue-600/10 text-blue-100 border-blue-500/20 rounded-br-none' 
-                            : 'bg-slate-950/60 text-slate-200 border-slate-800/60 rounded-bl-none'
-                        }`}>
-                          <p className={`text-[7px] font-mono font-black uppercase mb-1 tracking-wider ${isUser ? 'text-blue-400 text-right' : 'text-slate-500'}`}>
-                            {renderingLabel} {isUser && '(YOU)'}
-                          </p>
-                          <p className="break-words whitespace-pre-wrap leading-relaxed text-slate-200 selection:bg-blue-500/30">
-                            {msg.text}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              {activeChatGigId && (
-                <form 
-                  onSubmit={(e) => { e.preventDefault(); sendChatMessage(activeChatGigId); }}
-                  className="p-3 bg-slate-950/40 border-t border-slate-800/60 flex gap-2"
-                >
-                  <input 
-                    type="text" 
-                    placeholder="Broadcast encrypted data packet..." 
-                    value={chatMessage} 
-                    onChange={e => setChatMessage(e.target.value)} 
-                    className="flex-1 bg-slate-950 border border-slate-800 text-xs p-2.5 rounded-xl outline-none text-white font-mono focus:border-slate-700 transition" 
-                  />
-                  <button 
-                    type="submit"
-                    className="bg-slate-100 hover:bg-white text-black font-black px-4 rounded-xl text-[10px] uppercase transition-colors shadow shrink-0 font-sans tracking-wider"
-                  >
-                    Send
-                  </button>
-                </form>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'vault_dashboard' && (
-        <div className="max-w-4xl mx-auto p-4 md:p-8 relative z-10">
-          {mounted && isConnected && address?.toLowerCase() === DEVELOPER_ADMIN_ADDRESS.toLowerCase() && (
-            <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-3">
-              <div>
-                <p className="text-[10px] text-emerald-400 font-black uppercase font-mono">// ADMINISTRATIVE ACCESS DETECTED //</p>
-                <p className="text-xs text-slate-400 font-mono mt-1">Contract Accumulation Balance: <span className="text-emerald-400 font-bold">{contractBalance.data ? formatEther(contractBalance.data.value) : '0.00'} ETH</span></p>
-              </div>
-              <button onClick={handleAdminWithdrawLiquidity} disabled={chainId !== base.id} className="bg-emerald-500 text-black font-black text-xs px-5 py-3 rounded uppercase tracking-wider disabled:opacity-40">Withdraw Platform Fees</button>
             </div>
           )}
 
-          <div className="bg-[#10172a] border border-slate-800 p-4 rounded-lg text-xs space-y-4">
-            <h3 className="text-[10px] font-black uppercase tracking-widest font-mono text-cyan-400">// GIG ORDERS LOG (4% PLATFORM LAYER ACTIVE)</h3>
-            {listings.filter(i => i.type === 'smart_bounty').map(gig => (
-              <div key={gig.id} className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-3">
-                <div className="flex justify-between items-center">
-                  <h4 className="font-black text-white uppercase">{gig.title}</h4>
-                  <span className="text-emerald-400 font-bold font-mono">{gig.price} ETH</span>
-                </div>
-                {!gig.escrowReleased ? (
-                  <button onClick={() => handleBuyerReleaseGigEscrow(gig.id)} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 text-black font-black py-2 rounded text-[10px] uppercase tracking-widest disabled:opacity-40">
-                    Settle Contract & Disburse Funds
-                  </button>
-                ) : (
-                  <p className="text-[10px] text-emerald-500 font-mono font-black">// METRIC SEQUENCE CLOSED. TRANSACTION SETTLED.</p>
-                )}
+          {/* LIST ASSET SUB-VIEW */}
+          {activeTab === 'list' && (
+            <div className="max-w-xl mx-auto w-full">
+              <div className="mb-6 border-l-4 border-cyan-400 pl-3">
+                <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">List Asset Node</h1>
               </div>
-            ))}
+              <form onSubmit={handleCreateListing} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
+                <div className="grid grid-cols-3 gap-2">
+                  {(['physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map(type => (
+                    <button key={type} type="button" onClick={() => setFormType(type)} className={`py-2.5 rounded font-black uppercase text-[9px] border ${formType === type ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>{type.replace('_', ' ')}</button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Asset System Title</label>
+                    <input type="text" required placeholder="BOUNTY_PERFORMANCE_CODE" value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-white font-mono uppercase" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Operational Classification</label>
+                    <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
+                      {formType === 'physical_asset' && itemCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
+                      {formType === 'smart_bounty' && bountyCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
+                      {formType === 'tokenized_nft' && nftCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Base Registry Cost (ETH)</label>
+                    <div className="relative">
+                      <input type="number" step="0.0001" required placeholder="0.00" value={formPrice} onChange={e => setFormPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono font-bold text-emerald-400" />
+                      <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ {convertEthToUsd(formPrice)}</div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout Value (ETH)</label>
+                    <input type="number" step="0.0001" placeholder="0.00" value={formBuyNowPrice} onChange={e => setFormBuyNowPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono text-slate-400" />
+                  </div>
+                </div>
+
+                {formPrice && parseFloat(formPrice) > 0 && (
+                  <div className="p-3 bg-[#090d16] border border-cyan-500/10 rounded font-mono text-[9px] space-y-1 text-slate-400">
+                    <p className="text-cyan-400 font-black">// CONTRACT DISBURSEMENT SPLIT BREAKDOWN (4% PLATFORM CUT)</p>
+                    <p>Seller Net Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice).sellerCut} ETH</span> [${calculateMarketplaceTake(formPrice).sellerUsd} USD]</p>
+                    <p>Platform Protocol Fee: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice).platformCut} ETH</span> [${calculateMarketplaceTake(formPrice).platformUsd} USD]</p>
+                  </div>
+                )}
+
+                <div>
+                  <textarea rows={2} placeholder="SPECIFY TECHNICAL CONDITIONS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
+                </div>
+
+                <button type="submit" disabled={isTxPending || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
+                  {chainId !== base.id ? '// WIREFLOW MISALIGNED - SWITCH TO BASE //' : isTxPending ? '// WAITING ON SEQUENCER...' : 'Broadcast Registry Transaction'}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* BOUNTIES ESCROW SUB-VIEW */}
+          {activeTab === 'escrow_stream' && (
+            <div className="space-y-4">
+              <div className="border-l-4 border-cyan-400 pl-3">
+                <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Bounties Escrow Stream</h1>
+                <p className="text-slate-400 text-xs">Immutable decentralized IPFS sandbox prevents asset leakage prior to clearance loop signatures.</p>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+                <div className="xl:col-span-2 space-y-3">
+                  {listings.filter(i => i.type === 'smart_bounty').length === 0 ? (
+                    <div className="border border-dashed border-slate-800 rounded-lg p-8 text-center text-slate-600 font-mono text-xs">// NO ACTIVE SERVICE PIPELINES INITIALIZED ON NETWORK //</div>
+                  ) : (
+                    listings.filter(i => i.type === 'smart_bounty').map(gig => (
+                      <div key={gig.id} className={`p-4 md:p-5 rounded-lg border transition-all duration-300 ${activeChatGigId === gig.id ? 'bg-[#141e36] border-cyan-400' : 'bg-[#10172a] border-slate-800'}`}>
+                        <div className="flex flex-col sm:flex-row justify-between items-start">
+                          <div>
+                            <span className={`text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border ${gig.escrowReleased ? 'bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'bg-amber-950 text-amber-400 border-amber-500/20'}`}>
+                              {gig.escrowReleased ? 'FUNDS DISBURSED' : 'VAULT ESCROW ACTIVE'}
+                            </span>
+                            <h3 className="text-base font-black text-white mt-2 uppercase">{gig.title}</h3>
+                            <p className="text-[11px] text-slate-400 font-mono mt-1">Value allocation: <span className="text-emerald-400 font-bold">{gig.price} ETH</span> [${convertEthToUsd(gig.price)} USD]</p>
+                          </div>
+                          <button onClick={() => setActiveChatGigId(gig.id)} className="text-[10px] font-black text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-3 py-2 rounded uppercase mt-2 sm:mt-0">CONNECT COMM CHANNEL</button>
+                        </div>
+
+                        {mounted && address?.toLowerCase() === gig.seller.toLowerCase() && !gig.escrowReleased && (
+                          <div className="mt-4 p-3.5 bg-[#090d16] border border-cyan-500/20 rounded space-y-3">
+                            <p className="text-[9px] font-black text-cyan-400 font-mono">// CONTRACTOR CONTROL: SUBMIT COMPLETED WORK</p>
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                              <label className="flex-1 bg-[#10172a] border border-slate-800 p-2 rounded text-[11px] text-center font-mono cursor-pointer text-slate-400 hover:border-cyan-500 transition-colors">
+                                {isUploadingToIpfs[gig.id] ? "🧬 PINNING TO IPFS HARDENED EDGE..." : deliveryPayloads[gig.id] ? "✅ CIPHER MANIFEST CACHED" : "CHOOSE PRODUCTION COMPLETED FILE ZIP/ARCHIVE"}
+                                <input type="file" className="hidden" disabled={isUploadingToIpfs[gig.id]} onChange={e => e.target.files?.[0] && handleFreelancerSandboxUpload(gig.id, e.target.files[0])} />
+                              </label>
+                              {deliveryPayloads[gig.id] && (
+                                <button onClick={() => handleBroadcastDeliveryProof(gig.id)} disabled={chainId !== base.id} className="bg-emerald-400 text-black font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded disabled:opacity-40">Broadcast Delivery Proof</button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {gig.watermarkedFilePreview && (
+                          <div className="mt-4 p-3 bg-[#090d16] border border-slate-800 rounded">
+                            <div className="p-3 bg-[#10172a] rounded border border-dashed border-slate-800 text-center font-mono text-[10px]">
+                              {!gig.escrowReleased ? (
+                                <span className="text-amber-400 animate-pulse">🔒 METADATA PAYLOAD DETECTED IN STORAGE RESERVES. RELEASING ESCROW UNLOCKS INTEGRATED IPFS SIGNATURE LINK.</span>
+                              ) : (
+                                <div className="flex justify-between items-center text-xs">
+                                  <span className="text-emerald-400 font-bold">🔓 DISBURSEMENT SETTLED:</span>
+                                  <a href={gig.cleanFileUrl} target="_blank" rel="noreferrer" className="text-cyan-400 font-black underline">DOWNLOAD_CLEAR_SOURCE.zip</a>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="bg-[#10172a] border border-slate-800 rounded p-4 min-h-[300px] flex flex-col justify-between shadow-xl">
+                  <div>
+                    <h3 className="font-black text-[10px] uppercase text-slate-500 tracking-widest mb-3 border-b border-slate-800/60 pb-2">// LIVE TELEMETRY STREAM</h3>
+                    {activeChatGigId ? (
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                        {chatLogs.map((msg, idx) => {
+                          const isUser = address && msg.sender.toLowerCase() === (address.slice(0,6) + "..." + address.slice(-4)).toLowerCase();
+                          return (
+                            <div key={idx} className={`p-2.5 rounded text-[11px] font-mono ${isUser ? 'bg-[#141e36] text-cyan-300 border border-cyan-500/20 ml-auto max-w-[90%]' : 'bg-[#090d16] text-slate-300 border border-slate-800 max-w-[90%]'}`}>
+                              <p className="text-[7px] text-slate-500 uppercase tracking-widest font-black mb-0.5">{msg.sender}</p>
+                              <p className="break-words leading-tight">{msg.text}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-slate-600 text-[10px] font-mono text-center pt-16">// STANDBY // LINK CHAT TO ACTIVATE STREAM</p>
+                    )}
+                  </div>
+                  {activeChatGigId && (
+                    <div className="mt-3 pt-3 border-t border-slate-800/60 flex gap-1.5">
+                      <input type="text" placeholder="BROADCAST STRINGS ENCRYPTED..." value={chatMessage} onChange={e => setChatMessage(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendChatMessage(activeChatGigId)} className="flex-1 bg-[#090d16] border border-slate-800 text-[11px] p-2 rounded outline-none text-white font-mono" />
+                      <button onClick={() => sendChatMessage(activeChatGigId)} className="bg-zinc-200 text-black px-3 rounded text-[10px] font-black uppercase">SIG</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VAULT DASHBOARD SUB-VIEW */}
+          {activeTab === 'vault_dashboard' && (
+            <div className="space-y-4">
+              {mounted && isConnected && address?.toLowerCase() === DEVELOPER_ADMIN_ADDRESS.toLowerCase() && (
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-3">
+                  <div>
+                    <p className="text-[10px] text-emerald-400 font-black uppercase font-mono">// ADMINISTRATIVE ROOT SIGNATURE CONFIRMED //</p>
+                    <p className="text-xs text-slate-400 font-mono mt-1">Contract Accumulation Balances: <span className="text-emerald-400 font-bold">{contractBalance.data ? formatEther(contractBalance.data.value) : '0.00'} ETH</span></p>
+                  </div>
+                  <button onClick={handleAdminWithdrawLiquidity} disabled={chainId !== base.id} className="bg-emerald-500 text-black font-black text-xs px-5 py-3 rounded uppercase tracking-wider disabled:opacity-40">Execute Vault Payout</button>
+                </div>
+              )}
+
+              <div className="bg-[#10172a] border border-slate-800 p-4 rounded-lg text-xs space-y-4">
+                <h3 className="text-[10px] font-black uppercase tracking-widest font-mono text-cyan-400">// ESCROW ORDERS MANAGEMENT (4% PROTOCOL FEE ENFORCED)</h3>
+                {listings.filter(i => i.type === 'smart_bounty').map(gig => (
+                  <div key={gig.id} className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h4 className="font-black text-white uppercase">{gig.title}</h4>
+                      <span className="text-emerald-400 font-bold font-mono">{gig.price} ETH</span>
+                    </div>
+                    {!gig.escrowReleased ? (
+                      <button onClick={() => handleBuyerReleaseGigEscrow(gig.id)} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 text-black font-black py-2 rounded text-[10px] uppercase tracking-widest disabled:opacity-40">
+                        RELEASE_VAULT_ESCROW_FUNDS (Process 4% Split)
+                      </button>
+                    ) : (
+                      <p className="text-[10px] text-emerald-500 font-mono font-black">// TRANSACTION MATRIX CLOSED. SETTLEMENT COMPLETE.</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ==================================================================== */}
+        {/* RIGHT COLUMN SIDEBAR PANEL: THE MASTER LIQUIDITY HUB NODE */}
+        {/* ==================================================================== */}
+        <div className="lg:col-span-1 space-y-4">
+          <div className="border border-cyan-950 bg-[#10172a]/90 rounded-xl p-4 flex flex-col gap-3 font-mono shadow-[0_0_25px_rgba(0,240,255,0.03)] sticky top-24">
+            
+            {/* Header Telemetry Node Status */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-1">
+              <div className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#00f0ff]" />
+                <h3 className="text-xs font-bold tracking-wider text-cyan-400 uppercase">
+                  LIQUIDITY RAMPS
+                </h3>
+              </div>
+              <span className="text-[9px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+                v2.1
+              </span>
+            </div>
+
+            <p className="text-[11px] font-sans text-slate-400 leading-relaxed">
+              Insufficient liquidity or network gas to broadcast contract listings or settlement bids? Inject Base assets immediately.
+            </p>
+
+            {/* Link 1: The On-Site ATM Cross-Chain Skimming Bridge Router */}
+            <div className="flex flex-col gap-1 mt-1">
+              <div className="flex justify-between items-center text-[9px] text-slate-500 px-0.5">
+                <span>From: ETH, ARB, OP</span>
+                <span className="text-emerald-400 font-bold">Fee: 0.2%</span>
+              </div>
+              <a 
+                href="/portal"
+                className="flex items-center justify-center gap-2 border border-cyan-950 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/50 hover:border-cyan-500 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center"
+              >
+                ⚡ BRIDGE FROM OTHER CHAINS
+              </a>
+            </div>
+
+            {/* Link 2: The Coinbase Fiat Cash On-Ramp Link */}
+            <div className="flex flex-col gap-1 mt-1">
+              <div className="flex justify-between items-center text-[9px] text-slate-500 px-0.5">
+                <span>From: Card or Bank Account</span>
+                <span className="text-cyan-400">Bonus Active</span>
+              </div>
+              <a 
+                href="https://coinbase.com/join/3MUGJEH?src=android-link" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 border border-slate-800 bg-slate-900/40 text-slate-300 hover:bg-slate-900/80 hover:border-slate-600 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center"
+              >
+                💳 BUY CRYPTO WITH CASH ↗
+              </a>
+            </div>
+
+            {/* Quick Context Onboarding Disclaimers */}
+            <div className="mt-1 pt-2 border-t border-slate-800/60">
+              <p className="text-[9px] font-sans text-slate-500 leading-normal">
+                New network registrations utilizing the fiat portal clear eligibility parameters for up to $2,000 in free BTC bonuses once thresholds clear.
+              </p>
+            </div>
           </div>
         </div>
-      )}
+        {/* ==================================================================== */}
+        {/* RIGHT COLUMN SIDEBAR PANEL END */}
+        {/* ==================================================================== */}
 
+      </div>
+
+      {/* INSPECTION VIEW MODAL */}
       {selectedItem && (
         <div className="fixed inset-0 bg-[#070a12]/95 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setSelectedItem(null)}>
           <div className="bg-[#10172a] border border-slate-800 rounded-lg p-5 max-w-2xl w-full space-y-4" onClick={e => e.stopPropagation()}>
@@ -745,11 +792,11 @@ function MarketplaceContent() {
             <p className="text-slate-300 text-[11px] bg-[#090d16] p-3 rounded border border-slate-800 font-mono uppercase">{selectedItem.description}</p>
             <div className="pt-3 border-t border-slate-800 flex flex-col gap-2">
               <form onSubmit={handlePlaceBid} className="flex gap-1.5">
-                <input type="number" step="0.001" required placeholder={`// ENTER ESCROW BID CORNER VALUE > ${selectedItem.price}`} value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="flex-1 bg-[#090d16] border border-slate-800 p-2.5 rounded text-[11px] font-bold text-white font-mono outline-none" />
-                <button type="submit" disabled={chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">Lock Bid Escrow</button>
+                <input type="number" step="0.001" required placeholder={`// LOCK BID ESCROW CORNER VALUE > ${selectedItem.price}`} value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="flex-1 bg-[#090d16] border border-slate-800 p-2.5 rounded text-[11px] font-bold text-white font-mono outline-none" />
+                <button type="submit" disabled={chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">LOCK_ESCROW</button>
               </form>
               {selectedItem.buyNowPrice && (
-                <button onClick={handleBuyNow} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">Immediate Buyout ({selectedItem.buyNowPrice} ETH)</button>
+                <button onClick={handleBuyNow} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">SETTLE_IMMEDIATE_BUYOUT ({selectedItem.buyNowPrice} ETH)</button>
               )}
             </div>
           </div>
