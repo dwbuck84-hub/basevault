@@ -103,7 +103,6 @@ function MarketplaceContent() {
   
   useEffect(() => { setMounted(true); }, []);
 
-  // Upgraded Real-Time Telemetry Pipeline
   useEffect(() => {
     if (!activeChatGigId) return;
 
@@ -419,7 +418,7 @@ function MarketplaceContent() {
           <h1 className="text-xl md:text-2xl font-black tracking-tighter text-white bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(34,211,153,0.4)]">
             BASEVAULT MARKET
           </h1>
-          <span className="text-[8px] uppercase font-bold text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/40 tracking-widest">
+          <span className="text-[8px] uppercase font-bold text-cyan-300 bg-cyan-955/60 px-2 py-0.5 rounded border border-cyan-500/40 tracking-widest">
             NODE OPEN_SOURCE
           </span>
         </div>
@@ -514,11 +513,11 @@ function MarketplaceContent() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Asset System Title</label>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Asset Title</label>
                 <input type="text" required placeholder="GIG_PERFORMANCE_CODE" value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-white font-mono uppercase" />
               </div>
               <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Operational Classification</label>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Classification</label>
                 <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
                   {formType === 'physical_asset' && itemCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
                   {formType === 'smart_bounty' && bountyCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
@@ -529,28 +528,28 @@ function MarketplaceContent() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Base Registry Cost (ETH)</label>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Escrow Value (ETH)</label>
                 <div className="relative">
                   <input type="number" step="0.0001" required placeholder="0.00" value={formPrice} onChange={e => setFormPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono font-bold text-emerald-400" />
                   <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ {convertEthToUsd(formPrice)}</div>
                 </div>
               </div>
               <div>
-                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout Value (ETH)</label>
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout (ETH)</label>
                 <input type="number" step="0.0001" placeholder="0.00" value={formBuyNowPrice} onChange={e => setFormBuyNowPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono text-slate-400" />
               </div>
             </div>
 
             {formPrice && parseFloat(formPrice) > 0 && (
               <div className="p-3 bg-[#090d16] border border-cyan-500/10 rounded font-mono text-[9px] space-y-1 text-slate-400">
-                <p className="text-cyan-400 font-black">// CONTRACT DISBURSEMENT SPLIT BREAKDOWN (4% PLATFORM CUT)</p>
-                <p>Seller Net Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice).sellerCut} ETH</span> [${calculateMarketplaceTake(formPrice).sellerUsd} USD]</p>
-                <p>Platform Protocol Fee: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice).platformCut} ETH</span> [${calculateMarketplaceTake(formPrice).platformUsd} USD]</p>
+                <p className="text-cyan-400 font-black">// VAULT FEE SPLIT BREAKDOWN (4% PLATFORM LAYER)</p>
+                <p>Seller Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice).sellerCut} ETH</span> [${calculateMarketplaceTake(formPrice).sellerUsd} USD]</p>
+                <p>Platform Allocation: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice).platformCut} ETH</span> [${calculateMarketplaceTake(formPrice).platformUsd} USD]</p>
               </div>
             )}
 
             <div>
-              <textarea rows={2} placeholder="SPECIFY TECHNICAL CONDITIONS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
+              <textarea rows={2} placeholder="SPECIFY PERFORMANCE TERMS OR ARTIFACT META STRINGS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
             </div>
 
             <button type="submit" disabled={isTxPending || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
@@ -592,7 +591,7 @@ function MarketplaceContent() {
                         <p className="text-[9px] font-black text-cyan-400 font-mono">// WORK PRODUCTION PORTAL: DEPLOY CODE MANIFEST</p>
                         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                           <label className="flex-1 bg-[#10172a] border border-slate-800 p-2.5 rounded text-[11px] text-center font-mono cursor-pointer text-slate-400 hover:border-cyan-500 transition-colors">
-                            {isUploadingToIpfs[gig.id] ? "🧬 DEPLOYING RECONSTRUCTION LINK TO IPFS..." : deliveryPayloads[gig.id] ? "✅ CODE ARCHIVE STAGED" : "SELECT PRODUCTION COMPLETED ARTIFACT ARCHIVE (.ZIP)"}
+                            {isUploadingToIpfs[gig.id] ? "🧬 DEPLOYING TO IPFS LAYERS..." : deliveryPayloads[gig.id] ? "✅ DATA MANIFEST READY" : "SELECT PRODUCTION COMPLETED ARCHIVE (.ZIP)"}
                             <input type="file" className="hidden" disabled={isUploadingToIpfs[gig.id]} onChange={e => e.target.files?.[0] && handleFreelancerSandboxUpload(gig.id, e.target.files[0])} />
                           </label>
                           {deliveryPayloads[gig.id] && (
@@ -606,11 +605,11 @@ function MarketplaceContent() {
                       <div className="mt-4 p-3 bg-[#090d16] border border-slate-800/80 rounded">
                         <div className="p-3 bg-[#10172a] rounded border border-dashed border-slate-800 text-center font-mono text-[10px]">
                           {!gig.escrowReleased ? (
-                            <span className="text-amber-400 animate-pulse">🔒 FILES ENCRYPTED IN ESCROW STORAGE. RELEASING TRANSACTION CONTRACT UNLOCKS RECONSTRUCTION SIGNATURE KEY.</span>
+                            <span className="text-amber-400 animate-pulse">🔒 SECURE FILE STAGED IN ESCROW. RELEASING TRANSACTION CONTRACT UNLOCKS RECONSTRUCTION SIGNATURE LINK.</span>
                           ) : (
                             <div className="flex justify-between items-center text-xs px-1">
-                              <span className="text-emerald-400 font-bold">🔓 CONTRACT CLOSED:</span>
-                              <a href={gig.cleanFileUrl} target="_blank" rel="noreferrer" className="text-blue-400 font-black underline hover:text-blue-300 transition">DOWNLOAD_CLEAR_SOURCE.zip</a>
+                              <span className="text-emerald-400 font-bold">🔓 ESCROW DISBURSED:</span>
+                              <a href={gig.cleanFileUrl} target="_blank" rel="noreferrer" className="text-blue-400 font-black underline hover:text-blue-300 transition">DOWNLOAD_SOURCE.zip</a>
                             </div>
                           )}
                         </div>
@@ -621,7 +620,7 @@ function MarketplaceContent() {
               )}
             </div>
 
-            {/* UPGRADED PRODUCTION LEVEL REAL-TIME CHAT PANEL */}
+            {/* LIVE REAL-TIME CHAT PANEL CONTAINER */}
             <div className="lg:col-span-5 xl:col-span-4 bg-[#10172a] border border-slate-800/80 rounded-2xl h-[520px] flex flex-col justify-between shadow-2xl overflow-hidden">
               <div className="p-4 bg-slate-950/40 border-b border-slate-800/60 flex justify-between items-center">
                 <div className="flex items-center gap-2">
@@ -636,11 +635,11 @@ function MarketplaceContent() {
                   <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-600 font-mono">
                     <span className="text-xl mb-2">📡</span>
                     <p className="text-[10px] uppercase tracking-wider">// STANDBY SYSTEM //</p>
-                    <p className="text-[9px] mt-1 text-slate-600 lowercase">Link communication stream to mount network sockets</p>
+                    <p className="text-[9px] mt-1 text-slate-600 lowercase">Link channel to mount live WebSockets</p>
                   </div>
                 ) : chatLogs.length === 0 ? (
                   <div className="flex items-center justify-center h-full text-center p-6 font-mono text-[10px] text-slate-500 italic">
-                    // Channel initialized. Begin cryptographic negotiation sequence...
+                    // Channel open. Begin negotiation sequence below...
                   </div>
                 ) : (
                   chatLogs.map((msg, idx) => {
@@ -676,7 +675,7 @@ function MarketplaceContent() {
                 >
                   <input 
                     type="text" 
-                    placeholder="Broadcast confidential data string..." 
+                    placeholder="Broadcast encrypted data packet..." 
                     value={chatMessage} 
                     onChange={e => setChatMessage(e.target.value)} 
                     className="flex-1 bg-slate-950 border border-slate-800 text-xs p-2.5 rounded-xl outline-none text-white font-mono focus:border-slate-700 transition" 
@@ -699,15 +698,15 @@ function MarketplaceContent() {
           {mounted && isConnected && address?.toLowerCase() === DEVELOPER_ADMIN_ADDRESS.toLowerCase() && (
             <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-3">
               <div>
-                <p className="text-[10px] text-emerald-400 font-black uppercase font-mono">// ADMINISTRATIVE ROOT SIGNATURE CONFIRMED BIPPASSED //</p>
-                <p className="text-xs text-slate-400 font-mono mt-1">Contract Accumulation Balances: <span className="text-emerald-400 font-bold">{contractBalance.data ? formatEther(contractBalance.data.value) : '0.00'} ETH</span></p>
+                <p className="text-[10px] text-emerald-400 font-black uppercase font-mono">// ADMINISTRATIVE ACCESS DETECTED //</p>
+                <p className="text-xs text-slate-400 font-mono mt-1">Contract Accumulation Balance: <span className="text-emerald-400 font-bold">{contractBalance.data ? formatEther(contractBalance.data.value) : '0.00'} ETH</span></p>
               </div>
-              <button onClick={handleAdminWithdrawLiquidity} disabled={chainId !== base.id} className="bg-emerald-500 text-black font-black text-xs px-5 py-3 rounded uppercase tracking-wider disabled:opacity-40">Execute Vault Payout</button>
+              <button onClick={handleAdminWithdrawLiquidity} disabled={chainId !== base.id} className="bg-emerald-500 text-black font-black text-xs px-5 py-3 rounded uppercase tracking-wider disabled:opacity-40">Withdraw Platform Fees</button>
             </div>
           )}
 
           <div className="bg-[#10172a] border border-slate-800 p-4 rounded-lg text-xs space-y-4">
-            <h3 className="text-[10px] font-black uppercase tracking-widest font-mono text-cyan-400">// GIG MANAGEMENT ORDERS (4% ESCROW ENFORCED)</h3>
+            <h3 className="text-[10px] font-black uppercase tracking-widest font-mono text-cyan-400">// GIG ORDERS LOG (4% PLATFORM LAYER ACTIVE)</h3>
             {listings.filter(i => i.type === 'smart_bounty').map(gig => (
               <div key={gig.id} className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-3">
                 <div className="flex justify-between items-center">
@@ -716,10 +715,10 @@ function MarketplaceContent() {
                 </div>
                 {!gig.escrowReleased ? (
                   <button onClick={() => handleBuyerReleaseGigEscrow(gig.id)} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 text-black font-black py-2 rounded text-[10px] uppercase tracking-widest disabled:opacity-40">
-                    RELEASE_VAULT_ESCROW_FUNDS (Process 4% Split)
+                    Settle Contract & Disburse Funds
                   </button>
                 ) : (
-                  <p className="text-[10px] text-emerald-500 font-mono font-black">// TRANSACTION MATRIX CLOSED. SETTLEMENT COMPLETE.</p>
+                  <p className="text-[10px] text-emerald-500 font-mono font-black">// METRIC SEQUENCE CLOSED. TRANSACTION SETTLED.</p>
                 )}
               </div>
             ))}
@@ -746,11 +745,11 @@ function MarketplaceContent() {
             <p className="text-slate-300 text-[11px] bg-[#090d16] p-3 rounded border border-slate-800 font-mono uppercase">{selectedItem.description}</p>
             <div className="pt-3 border-t border-slate-800 flex flex-col gap-2">
               <form onSubmit={handlePlaceBid} className="flex gap-1.5">
-                <input type="number" step="0.001" required placeholder={`// LOCK BID ESCROW CORNER VALUE > ${selectedItem.price}`} value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="flex-1 bg-[#090d16] border border-slate-800 p-2.5 rounded text-[11px] font-bold text-white font-mono outline-none" />
-                <button type="submit" disabled={chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">LOCK_ESCROW</button>
+                <input type="number" step="0.001" required placeholder={`// ENTER ESCROW BID CORNER VALUE > ${selectedItem.price}`} value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="flex-1 bg-[#090d16] border border-slate-800 p-2.5 rounded text-[11px] font-bold text-white font-mono outline-none" />
+                <button type="submit" disabled={chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">Lock Bid Escrow</button>
               </form>
               {selectedItem.buyNowPrice && (
-                <button onClick={handleBuyNow} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">SETTLE_IMMEDIATE_BUYOUT ({selectedItem.buyNowPrice} ETH)</button>
+                <button onClick={handleBuyNow} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">Immediate Buyout ({selectedItem.buyNowPrice} ETH)</button>
               )}
             </div>
           </div>
