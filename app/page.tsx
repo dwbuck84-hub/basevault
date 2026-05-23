@@ -20,6 +20,10 @@ import {
 
 import MARKETPLACE_ABI from '../constants/abi.json';
 
+// 🔥 BACKEND INTEGRATION IMPORTERS (SIBLING COMPONENT PATH)
+import SupportBot from './components/SupportBot';
+import IntegratedAiAppraiser from './components/IntegratedAiAppraiser';
+
 interface Listing {
   id: number;
   type: 'physical_asset' | 'smart_bounty' | 'tokenized_nft'; 
@@ -50,7 +54,6 @@ interface Listing {
 const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
 const VAULT_CONTRACT_ADDRESS = "0x4bEa1744818C8B0Bb744e3524670F27253AE7aA5";
 
-// Next.js App Router requires searchParams to be wrapped in a Suspense boundary
 export default function Home() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">INITIALIZING INTERFACE TERMINAL...</div>}>
@@ -68,7 +71,6 @@ function MarketplaceContent() {
   const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const contractBalance = useBalance({ address: VAULT_CONTRACT_ADDRESS });
 
-  // 📡 ROUTING DECODER: Pull identifier straight out of the URL path string
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
 
@@ -105,11 +107,9 @@ function MarketplaceContent() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  // Sync historical messages and open real-time cross-machine sockets
   useEffect(() => {
     if (!activeChatGigId) return;
 
-    // 1. Fetch historical database state for this bounty channel
     const fetchChatHistory = async () => {
       const { data, error } = await supabase
         .from('marketplace_chats')
@@ -123,7 +123,6 @@ function MarketplaceContent() {
     };
     fetchChatHistory();
 
-    // 2. Open real-time channel subscription to stream updates instantly across devices
     const telemetryChannel = supabase
       .channel(`gig_telemetry_${activeChatGigId}`)
       .on('postgres_changes', { 
@@ -142,7 +141,6 @@ function MarketplaceContent() {
     };
   }, [activeChatGigId]);
 
-  // Price Feed Oracle
   useEffect(() => {
     const fetchCurrentPriceFeed = async () => {
       try {
@@ -158,7 +156,6 @@ function MarketplaceContent() {
     return () => clearInterval(priceTickerInterval);
   }, []);
 
-  // Contract Read Methods
   const { data: totalListingsCount, refetch: reloadContractCount } = useReadContract({
     address: VAULT_CONTRACT_ADDRESS,
     abi: MARKETPLACE_ABI,
@@ -296,6 +293,21 @@ function MarketplaceContent() {
     return true; 
   };
 
+  const processAiListingDeployment = async (generatedTitle: string, selectedPriceEth: string, generatedDescription: string, category: string) => {
+    if (!verifyActiveNetworkChain()) return;
+    const passedCompliance = await runSecurityComplianceScanner(generatedTitle, generatedDescription);
+    if (!passedCompliance) return;
+
+    const fee = calculateListingFee('physical_asset', selectedPriceEth);
+    writeContract({ 
+      address: VAULT_CONTRACT_ADDRESS, 
+      abi: MARKETPLACE_ABI, 
+      functionName: 'listAsset', 
+      args: [BigInt(Date.now()), 0, parseEther(selectedPriceEth || '0')], 
+      value: parseEther(fee.eth) 
+    });
+  };
+
   const handleCreateListing = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!verifyActiveNetworkChain()) return;
@@ -345,9 +357,6 @@ function MarketplaceContent() {
     }
   };
 
-  // --------------------------------------------------------------------
-  // 🧭 INTERCEPT PANEL: Triggers instantly if ?id= query is in browser path
-  // --------------------------------------------------------------------
   if (id) {
     const activeIndexItem = listings.find(l => l.id === Number(id));
     return (
@@ -381,9 +390,6 @@ function MarketplaceContent() {
     );
   }
 
-  // --------------------------------------------------------------------
-  // 🏆 MAIN SITE REGISTRY INTERFACE (Loads safely on root domain path)
-  // --------------------------------------------------------------------
   return (
     <div className="min-h-screen p-0 m-0 w-full bg-[#0a0f1d] text-slate-100">
       {/* TOS ACCESS PORTAL */}
@@ -434,9 +440,11 @@ function MarketplaceContent() {
           {(['browse', 'list', 'escrow_stream', 'vault_dashboard'] as const).map(tab => (
             <button 
               key={tab} onClick={() => setActiveTab(tab)} 
-              className={`transition-all whitespace-nowrap relative py-1 ${activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}`}
+              className="transition-all whitespace-nowrap relative py-1"
             >
-              {tab === 'escrow_stream' ? 'Bounties Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
+              <span className={activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}>
+                {tab === 'escrow_stream' ? 'Bounties Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
+              </span>
             </button>
           ))}
           <div className="h-4 w-[1px] bg-slate-800" />
@@ -481,7 +489,7 @@ function MarketplaceContent() {
 
               <div className="flex gap-2 overflow-x-auto no-scrollbar">
                 {(['all', 'physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map((tab) => (
-                  <button key={tab} onClick={() => setBrowseSubTab(tab)} className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
+                  <button key={tab} onClick={() => setBrowseSubTab(tab)} className={browseSubTab === tab ? 'px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 bg-[#11182c] text-slate-400 border-slate-800'}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
                 ))}
               </div>
 
@@ -521,14 +529,26 @@ function MarketplaceContent() {
 
           {/* LIST ASSET SUB-VIEW */}
           {activeTab === 'list' && (
-            <div className="max-w-xl mx-auto w-full">
-              <div className="mb-6 border-l-4 border-cyan-400 pl-3">
-                <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">List Asset Node</h1>
+            <div className="max-w-xl mx-auto w-full space-y-8">
+              
+              {/* 🛡️ INTERACTIVE AI ASSISTANT OVERRIDE */}
+              <div className="border border-cyan-500/20 bg-[#11182c]/60 rounded-xl p-1 shadow-xl">
+                <IntegratedAiAppraiser onDeployListing={processAiListingDeployment} ethUsdRate={ethUsdRate} />
+              </div>
+
+              <div className="flex items-center justify-center gap-4 text-xs font-mono text-slate-600 uppercase">
+                <div className="h-[1px] bg-slate-800 flex-1" />
+                <span>Or Deploy Contract Manually</span>
+                <div className="h-[1px] bg-slate-800 flex-1" />
+              </div>
+
+              <div className="mb-6 border-l-4 border-slate-700 pl-3">
+                <h2 className="text-lg font-black text-slate-400 tracking-tighter uppercase">Legacy Input Registry</h2>
               </div>
               <form onSubmit={handleCreateListing} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
                 <div className="grid grid-cols-3 gap-2">
                   {(['physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map(type => (
-                    <button key={type} type="button" onClick={() => setFormType(type)} className={`py-2.5 rounded font-black uppercase text-[9px] border ${formType === type ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>{type.replace('_', ' ')}</button>
+                    <button key={type} type="button" onClick={() => setFormType(type)} className={formType === type ? 'py-2.5 rounded font-black uppercase text-[9px] border bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'py-2.5 rounded font-black uppercase text-[9px] border bg-[#090d16] border-slate-800 text-slate-500'}>{type.replace('_', ' ')}</button>
                   ))}
                 </div>
 
@@ -594,10 +614,10 @@ function MarketplaceContent() {
                     <div className="border border-dashed border-slate-800 rounded-lg p-8 text-center text-slate-600 font-mono text-xs">// NO ACTIVE SERVICE PIPELINES INITIALIZED ON NETWORK //</div>
                   ) : (
                     listings.filter(i => i.type === 'smart_bounty').map(gig => (
-                      <div key={gig.id} className={`p-4 md:p-5 rounded-lg border transition-all duration-300 ${activeChatGigId === gig.id ? 'bg-[#141e36] border-cyan-400' : 'bg-[#10172a] border-slate-800'}`}>
+                      <div key={gig.id} className={activeChatGigId === gig.id ? 'p-4 md:p-5 rounded-lg border transition-all duration-300 bg-[#141e36] border-cyan-400' : 'p-4 md:p-5 rounded-lg border transition-all duration-300 bg-[#10172a] border-slate-800'}>
                         <div className="flex flex-col sm:flex-row justify-between items-start">
                           <div>
-                            <span className={`text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border ${gig.escrowReleased ? 'bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'bg-amber-950 text-amber-400 border-amber-500/20'}`}>
+                            <span className={gig.escrowReleased ? 'text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-amber-950 text-amber-400 border-amber-500/20'}>
                               {gig.escrowReleased ? 'FUNDS DISBURSED' : 'VAULT ESCROW ACTIVE'}
                             </span>
                             <h3 className="text-base font-black text-white mt-2 uppercase">{gig.title}</h3>
@@ -648,7 +668,7 @@ function MarketplaceContent() {
                         {chatLogs.map((msg, idx) => {
                           const isUser = address && msg.sender.toLowerCase() === (address.slice(0,6) + "..." + address.slice(-4)).toLowerCase();
                           return (
-                            <div key={idx} className={`p-2.5 rounded text-[11px] font-mono ${isUser ? 'bg-[#141e36] text-cyan-300 border border-cyan-500/20 ml-auto max-w-[90%]' : 'bg-[#090d16] text-slate-300 border border-slate-800 max-w-[90%]'}`}>
+                            <div key={idx} className={isUser ? 'p-2.5 rounded text-[11px] font-mono bg-[#141e36] text-cyan-300 border border-cyan-500/20 ml-auto max-w-[90%]' : 'p-2.5 rounded text-[11px] font-mono bg-[#090d16] text-slate-300 border border-slate-800 max-w-[90%]'}>
                               <p className="text-[7px] text-slate-500 uppercase tracking-widest font-black mb-0.5">{msg.sender}</p>
                               <p className="break-words leading-tight">{msg.text}</p>
                             </div>
@@ -705,60 +725,41 @@ function MarketplaceContent() {
           )}
         </div>
 
-        {/* ==================================================================== */}
-        {/* RIGHT COLUMN SIDEBAR PANEL: THE MASTER LIQUIDITY HUB NODE */}
-        {/* ==================================================================== */}
+        {/* RIGHT COLUMN SIDEBAR PANEL */}
         <div className="lg:col-span-1 space-y-4">
           <div className="border border-cyan-950 bg-[#10172a]/90 rounded-xl p-4 flex flex-col gap-3 font-mono shadow-[0_0_25px_rgba(0,240,255,0.03)] sticky top-24">
-            
-            {/* Header Telemetry Node Status */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-1">
               <div className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#00f0ff]" />
-                <h3 className="text-xs font-bold tracking-wider text-cyan-400 uppercase">
-                  LIQUIDITY RAMPS
-                </h3>
+                <h3 className="text-xs font-bold tracking-wider text-cyan-400 uppercase">LIQUIDITY RAMPS</h3>
               </div>
-              <span className="text-[9px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
-                v2.1
-              </span>
+              <span className="text-[9px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">v2.1</span>
             </div>
 
             <p className="text-[11px] font-sans text-slate-400 leading-relaxed">
               Insufficient liquidity or network gas to broadcast contract listings or settlement bids? Inject Base assets immediately.
             </p>
 
-            {/* Link 1: The On-Site ATM Cross-Chain Skimming Bridge Router */}
             <div className="flex flex-col gap-1 mt-1">
               <div className="flex justify-between items-center text-[9px] text-slate-500 px-0.5">
                 <span>From: ETH, ARB, OP</span>
                 <span className="text-emerald-400 font-bold">Fee: 0.2%</span>
               </div>
-              <a 
-                href="/portal"
-                className="flex items-center justify-center gap-2 border border-cyan-950 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/50 hover:border-cyan-500 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center"
-              >
+              <a href="/portal" className="flex items-center justify-center gap-2 border border-cyan-950 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/50 hover:border-cyan-500 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center">
                 ⚡ BRIDGE FROM OTHER CHAINS
               </a>
             </div>
 
-            {/* Link 2: The Coinbase Fiat Cash On-Ramp Link */}
             <div className="flex flex-col gap-1 mt-1">
               <div className="flex justify-between items-center text-[9px] text-slate-500 px-0.5">
                 <span>From: Card or Bank Account</span>
                 <span className="text-cyan-400">Bonus Active</span>
               </div>
-              <a 
-                href="https://coinbase.com/join/3MUGJEH?src=android-link" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 border border-slate-800 bg-slate-900/40 text-slate-300 hover:bg-slate-900/80 hover:border-slate-600 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center"
-              >
+              <a href="https://coinbase.com/join/3MUGJEH?src=android-link" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 border border-slate-800 bg-slate-900/40 text-slate-300 hover:bg-slate-900/80 hover:border-slate-600 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center">
                 💳 BUY CRYPTO WITH CASH ↗
               </a>
             </div>
 
-            {/* Quick Context Onboarding Disclaimers */}
             <div className="mt-1 pt-2 border-t border-slate-800/60">
               <p className="text-[9px] font-sans text-slate-500 leading-normal">
                 New network registrations utilizing the fiat portal clear eligibility parameters for up to $2,000 in free BTC bonuses once thresholds clear.
@@ -766,10 +767,6 @@ function MarketplaceContent() {
             </div>
           </div>
         </div>
-        {/* ==================================================================== */}
-        {/* RIGHT COLUMN SIDEBAR PANEL END */}
-        {/* ==================================================================== */}
-
       </div>
 
       {/* INSPECTION VIEW MODAL */}
@@ -802,6 +799,10 @@ function MarketplaceContent() {
           </div>
         </div>
       )}
+
+      {/* 🔥 THE AUTOMATED SUPPORT WIDGET: FLOATS GLOBALLY */}
+      <SupportBot walletAddress={address} />
+
     </div>
   );
 }
