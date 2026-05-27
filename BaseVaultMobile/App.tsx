@@ -1,87 +1,47 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, Text, View, StatusBar, TouchableOpacity, ScrollView, FlatList, TextInput, ActivityIndicator, Alert, Image, Modal, RefreshControl } from 'react-native';
+import { StyleSheet, Text, View, StatusBar, TouchableOpacity, ScrollView, FlatList, TextInput, Alert, Image, Modal, RefreshControl } from 'react-native';
 import { useWalletConnectModal, WalletConnectModal } from '@walletconnect/modal-react-native';
 import * as ImagePicker from 'expo-image-picker';
 
 const projectId = '23691e253e4736fe086c7eb4b094ca97';
-const CONTRACT_ADDRESS = '0x4bEa1744818C8B0Bb744e3524670F27253AE7aA5';
+
+// V2 MASTER CONTRACT & USDC
+const CONTRACT_ADDRESS = '0x5b21FA736498a27D2f12745c50Cb7C69d41dC281';
+const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+// READY FOR WEBSOCKET / PROVIDER INTEGRATION
+const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
+const MARKETPLACE_ABI = [
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV2.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_ethAmountInWei","type":"uint256"}],"name":"getUsdcEquivalent","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"purchaseAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"}
+];
 
 // Native UI branding injection
 const baseVaultLogo = require('./assets/1779467610858.png');
 
-interface WalletNFT {
-  id: string;
-  name: string;
-  collection: string;
-  tokenId: string;
-  imageUri: string;
-}
-
-interface Bounty {
-  id: string;
-  title: string;
-  description: string;
-  payout: string;
-  location: string;
-  status: 'OPEN_NODE' | 'BOUND_TO_YOU' | 'SUBMITTED_AWAITING_VERIFICATION' | 'FINALIZED';
-  proofImage?: string | null;
-  proofNotes?: string;
-  attachedFile?: string | null;
-  deployerRank: string;
-  collectorRank?: string;
-}
-
-interface ChatMessage {
-  id: string;
-  sender: 'HUNTER' | 'AUDITOR' | 'SYSTEM_AI';
-  text: string;
-  timestamp: string;
-}
-
-interface SoldItem {
-  id: string;
-  name: string;
-  price: string;
-  buyNowBase: number;
-  buyer: string;
-  shippingAddress: string;
-  shipmentVerified: boolean;
-  deliveryVerified: boolean;
-  trackingNumber: string;
-  trackingImageUri?: string | null;
-  shippingTier: 'STANDARD' | 'PREMIUM';
-  buyerRanked: boolean;
-}
-
-interface UnsoldItem {
-  id: string;
-  name: string;
-  originalPrice: string;
-  status: 'EXPIRED' | 'CANCELLED';
-}
-
-interface ItemLedger {
-  id: string;
-  name: string;
-  description: string;
-  type: string;
-  contract: string;
-  listPrice: string;
-  buyNowPrice: string;
-  status: string;
-  meta: string;
-  images: string[];
-  bidCount: number;
-  timeLeft: string;
-  sellerRank: string;
-}
+interface WalletNFT { id: string; name: string; collection: string; tokenId: string; imageUri: string; }
+interface Bounty { id: string; title: string; description: string; payout: string; currency: 'ETH' | 'USDC'; location: string; status: 'OPEN_NODE' | 'BOUND_TO_YOU' | 'SUBMITTED_AWAITING_VERIFICATION' | 'FINALIZED'; proofImage?: string | null; proofNotes?: string; attachedFile?: string | null; deployerRank: string; collectorRank?: string; }
+interface ChatMessage { id: string; sender: 'HUNTER' | 'AUDITOR' | 'SYSTEM_AI'; text: string; timestamp: string; }
+interface SoldItem { id: string; name: string; price: string; currency: 'ETH' | 'USDC'; buyNowBase: number; buyer: string; shippingAddress: string; shipmentVerified: boolean; deliveryVerified: boolean; trackingNumber: string; trackingImageUri?: string | null; shippingTier: 'STANDARD' | 'PREMIUM'; buyerRanked: boolean; }
+interface UnsoldItem { id: string; name: string; originalPrice: string; currency: 'ETH' | 'USDC'; status: 'EXPIRED' | 'CANCELLED'; }
+interface ItemLedger { id: string; name: string; description: string; type: string; contract: string; listPrice: string; buyNowPrice: string; currency: 'ETH' | 'USDC'; status: string; meta: string; images: string[]; bidCount: number; timeLeft: string; sellerRank: string; }
 
 export default function App() {
   const { open, isConnected, address, provider } = useWalletConnectModal();
   const [activeTab, setActiveTab] = useState<'MARKET' | 'BOUNTIES' | 'DASHBOARD' | 'DIAGNOSTICS'>('MARKET');
   
-  // LIVE ETH PRICE FEED INTEGRATION
   const [ethUsdRate, setEthUsdRate] = useState<number>(3450.00);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isConnected) {
+        open();
+      }
+    }, 1500); 
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const fetchEthPrice = async () => {
@@ -97,13 +57,26 @@ export default function App() {
     };
     
     fetchEthPrice();
-    const priceInterval = setInterval(fetchEthPrice, 60000); // Refresh every 60 seconds
+    const priceInterval = setInterval(fetchEthPrice, 60000);
     return () => clearInterval(priceInterval);
   }, []);
 
-  const ethToUsd = useCallback((ethAmount: string | number) => {
-    const num = parseFloat(String(ethAmount).replace(/[^0-9.]/g, '')) || 0;
+  const ethToUsd = useCallback((amount: string | number, isUsdc: boolean = false) => {
+    const num = parseFloat(String(amount).replace(/[^0-9.]/g, '')) || 0;
+    if (isUsdc) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     return `$${(num * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }, [ethUsdRate]);
+
+  // LIVE PARITY FEE CALCULATOR
+  const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC') => {
+    const numericPrice = parseFloat(priceInput) || 0;
+    const isHighValue = (currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate) > 500;
+    
+    if (currency === 'ETH') {
+      return isHighValue ? (numericPrice * 0.015) : 0.015;
+    } else {
+      return isHighValue ? (numericPrice * 0.015) : (0.015 * ethUsdRate);
+    }
   }, [ethUsdRate]);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -113,6 +86,7 @@ export default function App() {
 
   const [formVisible, setFormVisible] = useState(false);
   const [listingType, setListingType] = useState<'PHYSICAL' | 'BOUNTY' | 'NFT'>('PHYSICAL');
+  const [selectedCurrency, setSelectedCurrency] = useState<'ETH' | 'USDC'>('ETH');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [listPrice, setListPrice] = useState('');
@@ -141,6 +115,11 @@ export default function App() {
 
   const [checkoutItem, setCheckoutItem] = useState<ItemLedger | null>(null);
   const [buyerShippingTier, setBuyerShippingTier] = useState<'STANDARD' | 'PREMIUM'>('STANDARD');
+  const [checkoutShippingAddress, setCheckoutShippingAddress] = useState('');
+
+  const [activeTrackingItemId, setActiveTrackingItemId] = useState<string | null>(null);
+  const [trackingNumberInput, setTrackingNumberInput] = useState('');
+  const [trackingImageTempUri, setTrackingImageTempUri] = useState<string | null>(null);
 
   const [aiBotVisible, setAiBotVisible] = useState(false);
   const [aiBotInput, setAiBotInput] = useState('');
@@ -154,52 +133,14 @@ export default function App() {
   const [fieldImageUri, setFieldImageUri] = useState<string | null>(null);
   const [sandboxFileName, setSandboxFileName] = useState<string | null>(null);
   const [chatMessageText, setChatMessageText] = useState('');
-  const [bountyChats, setBountyChats] = useState<Record<string, ChatMessage[]>>({
-    'B-901': [
-      { id: 'm1', sender: 'AUDITOR', text: 'Ensure the retail storefront ad placement is checked thoroughly for baseline visibility.', timestamp: '10:42 AM' },
-      { id: 'm2', sender: 'HUNTER', text: 'Acknowledged node task. Arriving at geolocation targets shortly.', timestamp: '10:45 AM' }
-    ]
-  });
-
-  const [ownedNfts] = useState<WalletNFT[]>([
-    { id: 'W-NFT-01', name: 'DAGFORGE Elite Alpha Cyberdeck #104', collection: 'DAGFORGE TCG', tokenId: '#104', imageUri: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80' },
-    { id: 'W-NFT-02', name: 'BaseVault Black Founder pass #08', collection: 'BaseVault OG', tokenId: '#08', imageUri: 'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?auto=format&fit=crop&w=400&q=80' }
-  ]);
   
-  const [soldItems, setSoldItems] = useState<SoldItem[]>([
-    { id: 'SOLD-01', name: 'Custom Aluminium Cyberdeck Case V2 Frame', price: '0.10 ETH', buyNowBase: 0.10, buyer: '0x71C7...6E3b', shippingAddress: '1244 Parkway Node, Sevierville, TN 37862', shipmentVerified: false, deliveryVerified: false, trackingNumber: '', shippingTier: 'STANDARD', buyerRanked: false }
-  ]);
-
-  const [unsoldItems, setUnsoldItems] = useState<UnsoldItem[]>([
-    { id: 'UNSOLD-01', name: 'DAGFORGE Holo Cyberpunk Starter Pack Bundle', originalPrice: '0.02 ETH', status: 'EXPIRED' }
-  ]);
-
-  const [marketItems, setMarketItems] = useState<ItemLedger[]>([
-    {
-      id: 'BV-M-01',
-      name: 'Cyberdeck Production Frame (Aluminium V2)',
-      description: 'Fully assembled aluminium structural frame suitable for portable micro-computing builds and cyberdecks. Includes mounting hardware.',
-      type: 'PHYSICAL',
-      contract: CONTRACT_ADDRESS,
-      listPrice: '0.04 ETH',
-      buyNowPrice: '0.10 ETH',
-      status: 'LIVE_ESCROW',
-      meta: '🛡️ Certified: EXCELLENT Condition | Index: 98.2%',
-      images: [
-        'https://images.unsplash.com/photo-1587831990711-23ca6441447b?auto=format&fit=crop&w=500&q=80',
-        'https://images.unsplash.com/photo-1614741118887-7a4ee193a5fa?auto=format&fit=crop&w=400&q=80',
-        'https://images.unsplash.com/photo-1601524909162-be87252be298?auto=format&fit=crop&w=400&q=80'
-      ],
-      bidCount: 3,
-      timeLeft: '14h 22m (Block #89422)',
-      sellerRank: '👑 Rank S [99.8%]'
-    }
-  ]);
-
-  const [bounties, setBounties] = useState<Bounty[]>([
-    { id: 'B-901', title: 'Local Retail Merchandising & Ad Audit', description: 'Travel to local branch nodes to verify placement of ad materials. Upload photo proof.', payout: '0.015 BaseETH', location: 'Sevierville, TN', status: 'OPEN_NODE', deployerRank: 'Rank A [96.4%]' },
-    { id: 'B-902', title: 'Solidity Smart Contract Safety Verification', description: 'Review provided .sol files in sandbox and submit vulnerability reports.', payout: '0.04 ETH', location: 'Remote Node', status: 'OPEN_NODE', deployerRank: 'Rank S [99.1%]' }
-  ]);
+  // STRIPPED LEDGER ARRAYS FOR PRODUCTION
+  const [bountyChats, setBountyChats] = useState<Record<string, ChatMessage[]>>({});
+  const [ownedNfts] = useState<WalletNFT[]>([]);
+  const [soldItems, setSoldItems] = useState<SoldItem[]>([]);
+  const [unsoldItems, setUnsoldItems] = useState<UnsoldItem[]>([]);
+  const [marketItems, setMarketItems] = useState<ItemLedger[]>([]);
+  const [bounties, setBounties] = useState<Bounty[]>([]);
 
   const filteredMarketItems = marketItems.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || (item.description && item.description.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -213,22 +154,6 @@ export default function App() {
   const handlePullToRefreshMarket = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
-      const liveFreshInjection: ItemLedger = {
-        id: "BV-FRESH-INJECT-" + Date.now(),
-        name: `★ JUST MINED // Cyberdeck Rig Hub Pro [Block #${Math.floor(Math.random() * 500) + 90000}]`,
-        description: 'Automated network injection listing. Specs unverified.',
-        type: Math.random() > 0.5 ? "PHYSICAL" : "NFT",
-        contract: CONTRACT_ADDRESS,
-        listPrice: "0.06 ETH",
-        buyNowPrice: "0.18 ETH",
-        status: "LIVE_ESCROW",
-        meta: "📦 Unverified Merchant Entry",
-        images: ["https://images.unsplash.com/photo-1614741118887-7a4ee193a5fa?auto=format&fit=crop&w=500&q=80"],
-        bidCount: 0,
-        timeLeft: "7d 00h",
-        sellerRank: "👑 Rank S [100%]"
-      };
-      setMarketItems(prev => [liveFreshInjection, ...prev]);
       setRefreshing(false);
     }, 1200);
   }, []);
@@ -237,24 +162,6 @@ export default function App() {
     if (loadingMore) return;
     setLoadingMore(true);
     setTimeout(() => {
-      const incrementalTailBatch: ItemLedger[] = [
-        {
-          id: "BV-TAIL-BATCH-" + Math.random() + "-" + Date.now(),
-          name: "Infinite Generated Deck Matrix Wireframe Node",
-          description: 'Historical protocol data matrix render.',
-          type: "NFT",
-          contract: CONTRACT_ADDRESS,
-          listPrice: "0.022 ETH",
-          buyNowPrice: "0.08 ETH",
-          status: "LIVE_ESCROW",
-          meta: "Token Contract NFT ID: #204",
-          images: ["https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=500&q=80"],
-          bidCount: 1,
-          timeLeft: "4d 19h",
-          sellerRank: "Rank A [94.5%]"
-        }
-      ];
-      setMarketItems(prev => [...prev, ...incrementalTailBatch]);
       setLoadingMore(false);
     }, 1000);
   };
@@ -262,16 +169,6 @@ export default function App() {
   const handlePullToRefreshBounties = useCallback(() => {
     setRefreshingBounties(true);
     setTimeout(() => {
-      const freshBounty: Bounty = {
-        id: "B-FRESH-" + Date.now(),
-        title: `Priority Geolocation Audit [Node #${Math.floor(Math.random() * 500) + 9000}]`,
-        description: 'Urgent physical verification required at target coordinates.',
-        payout: "0.025 ETH",
-        location: "Sevierville, TN",
-        status: "OPEN_NODE",
-        deployerRank: "Rank S [99.9%]"
-      };
-      setBounties(prev => [freshBounty, ...prev]);
       setRefreshingBounties(false);
     }, 1200);
   }, []);
@@ -280,16 +177,6 @@ export default function App() {
     if (loadingMoreBounties) return;
     setLoadingMoreBounties(true);
     setTimeout(() => {
-      const tailBounty: Bounty = {
-        id: "B-TAIL-" + Math.random() + "-" + Date.now(),
-        title: "Legacy Web3 Contract Deployment Verification",
-        description: 'Verify legacy code execution and map memory usage.',
-        payout: "0.01 ETH",
-        location: "Remote",
-        status: "OPEN_NODE",
-        deployerRank: "Rank B [88.5%]"
-      };
-      setBounties(prev => [...prev, tailBounty]);
       setLoadingMoreBounties(false);
     }, 1000);
   };
@@ -361,89 +248,131 @@ export default function App() {
     if (customImages.length >= 10) return Alert.alert("Photo Cap Reached", "Ecosystem deployment rules restrict assets to 10 photos max.");
     const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
     if (!cameraPermission.granted) return Alert.alert("Hardware Access Denied", "System camera viewfinder sandbox clearance is mandatory to capture verification frames.");
-    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 0.7 });
-    if (!result.canceled && result.assets && result.assets.length > 0) setCustomImages(prev => [...prev, result.assets[0].uri]);
+    
+    setTimeout(async () => {
+      try {
+        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.7 });
+        if (!result.canceled && result.assets && result.assets.length > 0) setCustomImages(prev => [...prev, result.assets[0].uri]);
+      } catch (e) { Alert.alert("Camera Error", String(e)); }
+    }, 500);
   };
 
   const pickFromGallery = async () => {
     if (customImages.length >= 10) return Alert.alert("Photo Cap Reached", "Ecosystem deployment rules restrict assets to 10 photos max.");
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) return Alert.alert("Access Denied", "Gallery clearance is required to upload images from device.");
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 0.7 });
-    if (!result.canceled && result.assets && result.assets.length > 0) setCustomImages(prev => [...prev, result.assets[0].uri]);
+    
+    setTimeout(async () => {
+      try {
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.7 });
+        if (!result.canceled && result.assets && result.assets.length > 0) setCustomImages(prev => [...prev, result.assets[0].uri]);
+      } catch (e) { Alert.alert("Gallery Error", String(e)); }
+    }, 500);
   };
 
   const pickSandboxFile = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) return Alert.alert("Access Denied", "Clearance required.");
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false });
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      const splitName = result.assets[0].uri.split('/').pop() || "bounty_payload.bin";
-      setSandboxFileName("sandbox_secure_" + splitName + ".dat");
-      Alert.alert("Sandbox Safe-Guard Engaged", "File container isolated inside localized virtual sandbox engine.");
-    }
+    
+    setTimeout(async () => {
+      try {
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: false });
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+          const splitName = result.assets[0].uri.split('/').pop() || "bounty_payload.bin";
+          setSandboxFileName("sandbox_secure_" + splitName + ".dat");
+          Alert.alert("Sandbox Safe-Guard Engaged", "File container isolated inside localized virtual sandbox engine.");
+        }
+      } catch (e) { Alert.alert("File Error", String(e)); }
+    }, 500);
   };
 
   const handleUnifiedSubmit = () => {
-    if (listingType === 'BOUNTY') {
-      if (!title || !bountyPayout || !description) return Alert.alert("Input Error", "Provide bounty title, info description, and payout reward.");
-      setBounties(prev => [{ id: "B-" + Date.now(), title, description, payout: bountyPayout + " ETH", location: locationOrScope || 'Sevierville, TN Branch', status: 'OPEN_NODE', deployerRank: 'Rank New [100%]' }, ...prev]);
-      Alert.alert("Bounty Posted", "Listing verified and 0.02 ETH platform creation fee executed.");
-      setActiveTab('BOUNTIES');
-    } else {
-      let finalName = title;
-      let finalMeta = "Escrow Vault Asset";
-
-      if (listingType === 'NFT') {
-        if (!selectedNft) return Alert.alert("Selection Error", "Select a valid asset token from your wallet link.");
-        finalName = selectedNft.name;
-        finalMeta = "Token Contract NFT ID: " + selectedNft.tokenId;
+    const executeListing = () => {
+      if (listingType === 'BOUNTY') {
+        if (!title || !bountyPayout || !description) return Alert.alert("Input Error", "Provide bounty title, info description, and payout reward.");
+        setBounties(prev => [{ id: "B-" + Date.now(), title, description, payout: bountyPayout + " " + selectedCurrency, currency: selectedCurrency, location: locationOrScope || 'Local Node', status: 'OPEN_NODE', deployerRank: 'Rank New [100%]' }, ...prev]);
+        Alert.alert("Bounty Posted", `Listing verified and ${selectedCurrency === 'USDC' ? '$2.00 USDC' : '0.02 ETH'} platform creation fee executed.`);
+        setActiveTab('BOUNTIES');
       } else {
-        if (!title || !description) return Alert.alert("Input Error", "Please provide an asset title and physical description.");
+        let finalName = title;
+        let finalMeta = "Escrow Vault Asset";
+
+        if (listingType === 'NFT') {
+          if (!selectedNft) return Alert.alert("Selection Error", "Select a valid asset token from your wallet link.");
+          finalName = selectedNft.name;
+          finalMeta = "Token Contract NFT ID: " + selectedNft.tokenId;
+        } else {
+          if (!title || !description) return Alert.alert("Input Error", "Please provide an asset title and physical description.");
+        }
+
+        if (!listPrice || !buyNowPrice) return Alert.alert("Input Error", "Please assign dual-pricing boundaries.");
+
+        if (listingType === 'PHYSICAL' && shieldStatus !== 'VERIFIED') {
+          finalMeta = "📦 Unverified Merchant Entry";
+          setAiBotLogs(prev => [
+            ...prev,
+            { id: "business-bypass-" + Date.now(), sender: 'SYSTEM_AI', text: "⚠️ [NOTICE]: Bypassed automated compliance scanning frame workflow. Fast-tracking standard asset list container execution. Note: This item does not qualify for an on-chain verification badge.", timestamp: 'AUDIT' }
+          ]);
+        } else if (listingType === 'PHYSICAL') {
+          finalMeta = `🛡️ Certified: ${shieldConditionGrade} Condition | Index: ${shieldAuthenticityIndex}%`;
+        }
+
+        const exactFeeCalculated = calculateUnifiedFee(buyNowPrice, selectedCurrency);
+        const listingFeeText = listingType === 'NFT' ? '1.5% Listing Fee' : (selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC Parity Listing Fee` : `${exactFeeCalculated.toFixed(3)} ETH Listing Fee`);
+
+        const newListing: ItemLedger = {
+          id: "BV-LOCAL-" + Date.now(),
+          name: finalName,
+          description,
+          type: listingType,
+          contract: CONTRACT_ADDRESS,
+          listPrice: listPrice + " " + selectedCurrency,
+          buyNowPrice: buyNowPrice + " " + selectedCurrency,
+          currency: selectedCurrency,
+          status: 'MINED_AWAITING_LOCK',
+          meta: finalMeta,
+          images: listingType === 'NFT' && selectedNft ? [selectedNft.imageUri] : (customImages.length > 0 ? customImages : ['https://images.unsplash.com/photo-1587831990711-23ca6441447b?auto=format&fit=crop&w=500&q=80']),
+          bidCount: 0,
+          timeLeft: '7d 00h (Block fresh)',
+          sellerRank: 'Rank New [100%]'
+        };
+
+        setMarketItems(prev => [newListing, ...prev]);
+        Alert.alert("Asset Listed", `Escrow layers deployed. ${listingFeeText} applied.`);
       }
+      setTitle(''); setDescription(''); setListPrice(''); setBuyNowPrice(''); setBountyPayout(''); setLocationOrScope(''); setSelectedNft(null); setCustomImages([]); setFormVisible(false); setShieldStatus('IDLE');
+    };
 
-      if (!listPrice || !buyNowPrice) return Alert.alert("Input Error", "Please assign dual-pricing boundaries.");
-
-      if (listingType === 'PHYSICAL' && shieldStatus !== 'VERIFIED') {
-        finalMeta = "📦 Unverified Merchant Entry";
-        setAiBotLogs(prev => [
-          ...prev,
-          { id: "business-bypass-" + Date.now(), sender: 'SYSTEM_AI', text: "⚠️ [NOTICE]: Bypassed automated compliance scanning frame workflow. Fast-tracking standard asset list container execution. Note: This item does not qualify for an on-chain verification badge.", timestamp: 'AUDIT' }
-        ]);
-      } else if (listingType === 'PHYSICAL') {
-        finalMeta = `🛡️ Certified: ${shieldConditionGrade} Condition | Index: ${shieldAuthenticityIndex}%`;
-      }
-
-      const isHighValue = (parseFloat(buyNowPrice) * ethUsdRate) > 500;
-      const listingFeeText = listingType === 'NFT' || isHighValue ? '1.5% Listing Fee' : '0.015 ETH Listing Fee';
-
-      const newListing: ItemLedger = {
-        id: "BV-LOCAL-" + Date.now(),
-        name: finalName,
-        description,
-        type: listingType,
-        contract: CONTRACT_ADDRESS,
-        listPrice: listPrice + " ETH",
-        buyNowPrice: buyNowPrice + " ETH",
-        status: 'MINED_AWAITING_LOCK',
-        meta: finalMeta,
-        images: listingType === 'NFT' && selectedNft ? [selectedNft.imageUri] : (customImages.length > 0 ? customImages : ['https://images.unsplash.com/photo-1587831990711-23ca6441447b?auto=format&fit=crop&w=500&q=80']),
-        bidCount: 0,
-        timeLeft: '7d 00h (Block fresh)',
-        sellerRank: 'Rank New [100%]'
-      };
-
-      setMarketItems(prev => [newListing, ...prev]);
-      Alert.alert("Asset Listed", `Escrow layers deployed. ${listingFeeText} applied.`);
+    if (selectedCurrency === 'USDC') {
+      Alert.alert(
+        "USDC Spend Approval",
+        "Step 1: WalletConnect requires your signature to approve USDC transfer for Escrow lock.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Sign & Approve", 
+            onPress: () => {
+              Alert.alert(
+                "Finalizing Deployment",
+                "Step 2: Broadcasting Escrow logic to the BaseVault V2 Market.",
+                [{ text: "Confirm", onPress: executeListing }]
+              );
+            } 
+          }
+        ]
+      );
+    } else {
+      executeListing();
     }
-    setTitle(''); setDescription(''); setListPrice(''); setBuyNowPrice(''); setBountyPayout(''); setLocationOrScope(''); setSelectedNft(null); setCustomImages([]); setFormVisible(false); setShieldStatus('IDLE');
   };
 
   const handleExecuteCustomBid = (itemId: string) => {
+    const item = marketItems.find(i => i.id === itemId);
+    if (!item) return;
     const typedBid = customBidValues[itemId];
     if (!typedBid || parseFloat(typedBid) <= 0) return Alert.alert("Input Fault", "Assign a valid positive bid threshold.");
-    setMarketItems(prev => prev.map(item => item.id === itemId ? { ...item, listPrice: typedBid + " ETH", bidCount: item.bidCount + 1 } : item));
-    Alert.alert("Bid Proposal Broadcasted", `On-chain price state incremented to ${typedBid} ETH.`);
+    setMarketItems(prev => prev.map(item => item.id === itemId ? { ...item, listPrice: typedBid + " " + item.currency, bidCount: item.bidCount + 1 } : item));
+    Alert.alert("Bid Proposal Broadcasted", `On-chain price state incremented to ${typedBid} ${item.currency}.`);
     setActiveBidInputId(null);
   };
 
@@ -455,15 +384,61 @@ export default function App() {
     if (role === 'BOUNTY_COLLECTOR') setBounties(prev => prev.map(b => b.id === targetId ? { ...b, status: 'FINALIZED' } : b));
   };
 
-  const handleLaunchCheckoutModal = (item: ItemLedger) => { setCheckoutItem(item); setBuyerShippingTier('STANDARD'); };
+  const handleLaunchCheckoutModal = (item: ItemLedger) => { setCheckoutItem(item); setBuyerShippingTier('STANDARD'); setCheckoutShippingAddress(''); };
 
   const handleExecuteCheckoutPurchase = () => {
     if (!checkoutItem) return;
-    let basePriceNum = parseFloat(checkoutItem.buyNowPrice) || 0;
-    let absoluteFinalPrice = buyerShippingTier === 'PREMIUM' ? (basePriceNum + 0.02).toFixed(3) : basePriceNum.toFixed(3);
-    setSoldItems(prev => [{ id: "SOLD-" + Date.now(), name: checkoutItem.name, price: absoluteFinalPrice + " ETH", buyNowBase: basePriceNum, buyer: "0xLOCAL_NODE", shippingAddress: "User Profile Confirmed Delivery Address Block", shipmentVerified: false, deliveryVerified: false, trackingNumber: '', shippingTier: buyerShippingTier, buyerRanked: false }, ...prev]);
-    Alert.alert("Purchase Confirmed", `Appraisal validated: Escrow locked at ${absoluteFinalPrice} ETH.`);
-    setCheckoutItem(null);
+    if (!checkoutShippingAddress) {
+      Alert.alert("Input Error", "Destination Shipping Address is mandatory for physical nodes.");
+      return;
+    }
+
+    const executePurchase = () => {
+      let basePriceNum = parseFloat(checkoutItem.buyNowPrice) || 0;
+      let shippingFee = checkoutItem.currency === 'USDC' ? 2.00 : 0.02;
+      let absoluteFinalPrice = buyerShippingTier === 'PREMIUM' ? (basePriceNum + shippingFee).toFixed(3) : basePriceNum.toFixed(3);
+      
+      setSoldItems(prev => [{ 
+        id: "SOLD-" + Date.now(), 
+        name: checkoutItem.name, 
+        price: absoluteFinalPrice + " " + checkoutItem.currency, 
+        currency: checkoutItem.currency,
+        buyNowBase: basePriceNum, 
+        buyer: address ? `${address.slice(0,6)}...${address.slice(-4)}` : "0xLOCAL_NODE", 
+        shippingAddress: checkoutShippingAddress, 
+        shipmentVerified: false, 
+        deliveryVerified: false, 
+        trackingNumber: '', 
+        shippingTier: buyerShippingTier, 
+        buyerRanked: false 
+      }, ...prev]);
+      
+      Alert.alert("Purchase Confirmed", `Appraisal validated: Escrow locked at ${absoluteFinalPrice} ${checkoutItem.currency}.`);
+      setCheckoutItem(null);
+      setCheckoutShippingAddress('');
+    };
+
+    if (checkoutItem.currency === 'USDC') {
+      Alert.alert(
+        "USDC Purchase Authorization",
+        `Step 1: Approve spending limit of ${parseFloat(checkoutItem.buyNowPrice).toFixed(2)} USDC via WalletConnect.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Sign & Approve", 
+            onPress: () => {
+              Alert.alert(
+                "Finalizing Escrow",
+                "Step 2: Securing funds into BaseVault Node.",
+                [{ text: "Confirm Purchase", onPress: executePurchase }]
+              );
+            } 
+          }
+        ]
+      );
+    } else {
+      executePurchase();
+    }
   };
 
   const handleClaimBounty = (id: string) => {
@@ -488,14 +463,13 @@ export default function App() {
     setChatMessageText('');
   };
 
-  const handleMarkShippedWithTracking = async (id: string) => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) return Alert.alert("Access Denied", "Gallery clearance is required to upload tracking proof.");
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      setSoldItems(prev => prev.map(item => item.id === id ? { ...item, shipmentVerified: true, trackingImageUri: result.assets[0].uri } : item));
-      Alert.alert("Tracking Uploaded", "Shipment marked as verified on the blockchain ledger.");
-    }
+  const handleConfirmShipmentInput = (id: string) => {
+    if (!trackingNumberInput) return Alert.alert("Missing Data", "Tracking number is mandatory to verify shipment.");
+    setSoldItems(prev => prev.map(item => item.id === id ? { ...item, shipmentVerified: true, trackingNumber: trackingNumberInput, trackingImageUri: trackingImageTempUri } : item));
+    setActiveTrackingItemId(null);
+    setTrackingNumberInput('');
+    setTrackingImageTempUri(null);
+    Alert.alert("Tracking Uploaded", "Shipment marked as verified on the blockchain ledger.");
   };
 
   const executeVerifyDelivery = (id: string) => {
@@ -507,17 +481,18 @@ export default function App() {
     setListingType('PHYSICAL');
     setTitle(item.name);
     setListPrice(item.originalPrice);
+    setSelectedCurrency(item.currency);
     setBuyNowPrice('');
     setFormVisible(true);
     setUnsoldItems(prev => prev.filter(u => u.id !== item.id));
   };
 
   const getDynamicFeeDisclosureText = () => {
-    if (listingType === 'BOUNTY') return 'Protocol Fees: 0.02 ETH Listing Fee | 4% Escrow Release Fee upon execution verification.';
+    if (listingType === 'BOUNTY') return `Protocol Fees: ${selectedCurrency === 'USDC' ? '$2.00 USDC' : '0.02 ETH'} Listing Fee | 4% Escrow Release Fee.`;
     if (listingType === 'NFT') return 'Protocol Fees: 1.5% Listing Fee | 4% Escrow Release Fee upon confirmed transfer.';
-    const outRightUSD = parseFloat(buyNowPrice) * ethUsdRate;
-    if (outRightUSD > 500) return 'Protocol Fees: 1.5% Listing Fee (Values > $500) | 4% Escrow Release Fee upon delivery verification.';
-    return 'Protocol Fees: 0.015 ETH Base Listing Fee | 4% Escrow Release Fee upon delivery verification.';
+    const feeInEthOrUsdc = calculateUnifiedFee(buyNowPrice, selectedCurrency);
+    if (selectedCurrency === 'USDC') return `Protocol Fees: $${feeInEthOrUsdc.toFixed(2)} USDC Parity Listing Fee | 4% Escrow Release Fee.`;
+    return `Protocol Fees: ${feeInEthOrUsdc.toFixed(3)} ETH Base Listing Fee | 4% Escrow Release Fee.`;
   };
 
   const renderAIBotConsole = () => (
@@ -622,6 +597,16 @@ export default function App() {
                       <TouchableOpacity style={[styles.selectorBtn, listingType === 'NFT' && styles.selectorBtnActive]} onPress={() => setListingType('NFT')}><Text style={[styles.selectorBtnText, listingType === 'NFT' && styles.selectorBtnTextActive]}>🌌 NFT ASSET</Text></TouchableOpacity>
                     </View>
 
+                    <Text style={styles.inputLabel}>SETTLEMENT CURRENCY:</Text>
+                    <View style={styles.selectorRow}>
+                      <TouchableOpacity style={[styles.selectorBtn, selectedCurrency === 'ETH' && styles.selectorBtnActive]} onPress={() => setSelectedCurrency('ETH')}>
+                        <Text style={[styles.selectorBtnText, selectedCurrency === 'ETH' && styles.selectorBtnTextActive]}>ETH (Native)</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.selectorBtn, selectedCurrency === 'USDC' && styles.selectorBtnActive]} onPress={() => setSelectedCurrency('USDC')}>
+                        <Text style={[styles.selectorBtnText, selectedCurrency === 'USDC' && styles.selectorBtnTextActive]}>USDC (Token)</Text>
+                      </TouchableOpacity>
+                    </View>
+
                     {listingType === 'NFT' ? (
                       <View style={styles.staticWalletColumnContainerGrid}>
                         <Text style={styles.inputLabel}>CHOOSE NFT COMPONENT FROM WALLET CONTAINER TRAY:</Text>
@@ -633,6 +618,7 @@ export default function App() {
                         ) : (
                           <View>
                             <Text style={styles.walletConnectedBadgeAddressHeaderSpec}>Connected Signature Node: {address?.slice(0, 6)}...{address?.slice(-4)}</Text>
+                            {ownedNfts.length === 0 && <Text style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace' }}>[NO COMPATIBLE ASSETS LOCATED IN SIGNATURE NODE]</Text>}
                             {ownedNfts.map((nft) => (
                               <TouchableOpacity key={nft.id} style={[styles.staticTrayCardRowCell, selectedNft?.id === nft.id && styles.trayCardSelected]} onPress={() => { setSelectedNft(nft); setTitle(nft.name); }}>
                                 <Image source={{ uri: nft.imageUri }} style={styles.staticRowThumbImage} />
@@ -657,10 +643,10 @@ export default function App() {
                     {listingType === 'BOUNTY' ? (
                       <View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                          <Text style={styles.inputLabel}>BOUNTY PAYOUT FUNDS LOCKOUT (ETH):</Text>
-                          {bountyPayout ? <Text style={styles.fiatConversionTextOverlay}>≈ {ethToUsd(bountyPayout)}</Text> : null}
+                          <Text style={styles.inputLabel}>BOUNTY PAYOUT FUNDS LOCKOUT ({selectedCurrency}):</Text>
+                          {bountyPayout ? <Text style={styles.fiatConversionTextOverlay}>≈ {ethToUsd(bountyPayout, selectedCurrency === 'USDC')}</Text> : null}
                         </View>
-                        <TextInput style={styles.inputField} placeholder="0.02" placeholderTextColor="#64748b" keyboardType="numeric" value={bountyPayout} onChangeText={setBountyPayout} />
+                        <TextInput style={styles.inputField} placeholder={selectedCurrency === 'USDC' ? "50.00" : "0.02"} placeholderTextColor="#64748b" keyboardType="numeric" value={bountyPayout} onChangeText={setBountyPayout} />
                         <Text style={styles.inputLabel}>GEOLOCATION SCOPE REGISTRY TARGET TRACK:</Text>
                         <TextInput style={styles.inputField} placeholder="e.g. Sevierville, TN" placeholderTextColor="#64748b" value={locationOrScope} onChangeText={setLocationOrScope} />
                       </View>
@@ -668,17 +654,17 @@ export default function App() {
                       <View style={styles.dualPriceRow}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                             <Text style={styles.inputLabel}>MIN BID (ETH):</Text>
-                             {listPrice ? <Text style={styles.fiatConversionTextOverlay}>≈ {ethToUsd(listPrice)}</Text> : null}
+                             <Text style={styles.inputLabel}>MIN BID ({selectedCurrency}):</Text>
+                             {listPrice ? <Text style={styles.fiatConversionTextOverlay}>≈ {ethToUsd(listPrice, selectedCurrency === 'USDC')}</Text> : null}
                            </View>
-                           <TextInput style={styles.inputField} placeholder="0.01" placeholderTextColor="#64748b" keyboardType="numeric" value={listPrice} onChangeText={setListPrice} />
+                           <TextInput style={styles.inputField} placeholder={selectedCurrency === 'USDC' ? "20.00" : "0.01"} placeholderTextColor="#64748b" keyboardType="numeric" value={listPrice} onChangeText={setListPrice} />
                         </View>
                         <View style={{ flex: 1 }}>
                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                             <Text style={styles.inputLabel}>BUY NOW (ETH):</Text>
-                             {buyNowPrice ? <Text style={styles.fiatConversionTextOverlay}>≈ {ethToUsd(buyNowPrice)}</Text> : null}
+                             <Text style={styles.inputLabel}>BUY NOW ({selectedCurrency}):</Text>
+                             {buyNowPrice ? <Text style={styles.fiatConversionTextOverlay}>≈ {ethToUsd(buyNowPrice, selectedCurrency === 'USDC')}</Text> : null}
                            </View>
-                           <TextInput style={styles.inputField} placeholder="0.05" placeholderTextColor="#64748b" keyboardType="numeric" value={buyNowPrice} onChangeText={setBuyNowPrice} />
+                           <TextInput style={styles.inputField} placeholder={selectedCurrency === 'USDC' ? "100.00" : "0.05"} placeholderTextColor="#64748b" keyboardType="numeric" value={buyNowPrice} onChangeText={setBuyNowPrice} />
                         </View>
                       </View>
                     )}
@@ -737,6 +723,12 @@ export default function App() {
                   </ScrollView>
                 </View>
               </Modal>
+              
+              {marketItems.length === 0 && (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 50 }}>
+                  <Text style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>[NO ACTIVE MARKET LISTINGS LOCATED]</Text>
+                </View>
+              )}
 
               <FlatList
                 data={filteredMarketItems}
@@ -784,12 +776,12 @@ export default function App() {
                       <View>
                          <Text style={styles.priceDataLabel}>MIN BID:</Text>
                          <Text style={styles.priceDataValue}>{item.listPrice}</Text>
-                         <Text style={styles.priceDataUsdValue}>{ethToUsd(item.listPrice)}</Text>
+                         <Text style={styles.priceDataUsdValue}>{ethToUsd(item.listPrice, item.currency === 'USDC')}</Text>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
                          <Text style={styles.priceDataLabel}>BUY OUTRIGHT:</Text>
                          <Text style={styles.buyNowValueText}>{item.buyNowPrice}</Text>
-                         <Text style={styles.priceDataUsdValue}>{ethToUsd(item.buyNowPrice)}</Text>
+                         <Text style={styles.priceDataUsdValue}>{ethToUsd(item.buyNowPrice, item.currency === 'USDC')}</Text>
                       </View>
                     </View>
                     <View style={styles.cardActionContainerRow}>
@@ -801,7 +793,7 @@ export default function App() {
                       <View style={styles.expandableBiddingWorkflowInputRow}>
                         <TextInput
                           style={styles.customBidNumericFieldCell}
-                          placeholder="Enter bid limit..."
+                          placeholder={`Enter ${item.currency} limit...`}
                           placeholderTextColor="#888888"
                           keyboardType="numeric"
                           onChangeText={(val) => setCustomBidValues(prev => ({ ...prev, [item.id]: val }))}
@@ -819,6 +811,11 @@ export default function App() {
 
           {activeTab === 'BOUNTIES' && (
             <View style={{ flex: 1 }}>
+              {bounties.length === 0 && (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 50 }}>
+                  <Text style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>[NO ACTIVE BOUNTIES DETECTED]</Text>
+                </View>
+              )}
               <FlatList
                 data={filteredBounties}
                 keyExtractor={(item) => item.id}
@@ -838,7 +835,7 @@ export default function App() {
                     
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5, marginBottom: 14 }}>
                       <Text style={{ color: '#10b981', fontWeight: '900', marginRight: 8 }}>💰 Payout: {item.payout}</Text>
-                      <Text style={{ color: '#64748b', fontSize: 11, fontWeight: 'bold' }}>({ethToUsd(item.payout)})</Text>
+                      <Text style={{ color: '#64748b', fontSize: 11, fontWeight: 'bold' }}>({ethToUsd(item.payout, item.currency === 'USDC')})</Text>
                     </View>
                     
                     {item.status === 'OPEN_NODE' ? (
@@ -879,7 +876,7 @@ export default function App() {
                 <View style={styles.dashboardGridCell}>
                   <Text style={styles.metricLabel}>TOTAL VOLUME</Text>
                   <Text style={[styles.metricValue, { color: '#00f0ff' }]}>
-                    {marketItems.reduce((acc, item) => acc + (parseFloat(item.buyNowPrice) || 0), 0).toFixed(2)} ETH
+                    {marketItems.reduce((acc, item) => acc + (parseFloat(item.buyNowPrice) || 0), 0).toFixed(2)} UNITS
                   </Text>
                   <Text style={{ color: '#ef4444', fontSize: 8, marginTop: 6, fontWeight: 'bold' }}>* 4.0% Escrow Protocol Release Fee executes upon verifiable delivery or proof finalization across all active smart contracts.</Text>
                 </View>
@@ -903,7 +900,7 @@ export default function App() {
                 marketItems.map(item => (
                   <View key={item.id} style={styles.dashboardSubCardLineItem}>
                     <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 12 }}>{item.name}</Text>
-                    <Text style={{ color: '#00f0ff', fontSize: 10, fontFamily: 'monospace', marginTop: 4 }}>Price: {item.buyNowPrice} ({ethToUsd(item.buyNowPrice)})</Text>
+                    <Text style={{ color: '#00f0ff', fontSize: 10, fontFamily: 'monospace', marginTop: 4 }}>Price: {item.buyNowPrice} ({ethToUsd(item.buyNowPrice, item.currency === 'USDC')})</Text>
                   </View>
                 ))
               )}
@@ -928,7 +925,7 @@ export default function App() {
                   <View key={item.id} style={[styles.dashboardSubCardLineItem, { borderLeftColor: '#ef4444' }]}>
                     <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 12 }}>{item.name}</Text>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                      <Text style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace' }}>Old Price: {item.originalPrice}</Text>
+                      <Text style={{ color: '#64748b', fontSize: 10, fontFamily: 'monospace' }}>Old Price: {item.originalPrice} {item.currency}</Text>
                       <TouchableOpacity style={{ backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 4 }} onPress={() => handleRelistItemInit(item)}>
                         <Text style={{ color: '#ffffff', fontSize: 9, fontWeight: 'bold' }}>RELIST</Text>
                       </TouchableOpacity>
@@ -945,20 +942,25 @@ export default function App() {
                   <View key={item.id} style={styles.dashboardLedgerCard}>
                     <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 12 }}>{item.name}</Text>
                     <Text style={{ color: '#888888', fontSize: 10, marginVertical: 4 }}>Buyer: {item.buyer}</Text>
-                    <Text style={{ color: '#00f0ff', fontSize: 10, fontFamily: 'monospace', marginBottom: 10 }}>Value Locked: {item.price} ({ethToUsd(item.price)})</Text>
+                    <Text style={{ color: '#64748b', fontSize: 10, marginVertical: 4 }}>Destination: {item.shippingAddress}</Text>
+                    <Text style={{ color: '#00f0ff', fontSize: 10, fontFamily: 'monospace', marginBottom: 10 }}>Value Locked: {item.price} ({ethToUsd(item.price, item.currency === 'USDC')})</Text>
                     
+                    {item.shipmentVerified && (
+                      <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: 'bold', marginVertical: 4 }}>Tracking ID: {item.trackingNumber}</Text>
+                    )}
+
                     {item.trackingImageUri && (
-                      <View style={{ marginBottom: 10 }}>
+                      <View style={{ marginBottom: 10, marginTop: 5 }}>
                         <Text style={{ color: '#64748b', fontSize: 9, marginBottom: 4 }}>ATTACHED TRACKING LEDGER PROOF:</Text>
                         <Image source={{ uri: item.trackingImageUri }} style={{ width: 60, height: 60, borderRadius: 4, borderWidth: 1, borderColor: '#333' }} />
                       </View>
                     )}
 
-                    {!item.deliveryVerified && (
+                    {!item.deliveryVerified && activeTrackingItemId !== item.id && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#333', paddingTop: 10 }}>
                         <TouchableOpacity 
                           style={[styles.ledgerBtn, item.shipmentVerified ? styles.ledgerBtnActive : null]} 
-                          onPress={() => !item.shipmentVerified && handleMarkShippedWithTracking(item.id)}
+                          onPress={() => !item.shipmentVerified && setActiveTrackingItemId(item.id)}
                         >
                           <Text style={[styles.ledgerBtnText, item.shipmentVerified ? { color: '#000' } : null]}>
                             {item.shipmentVerified ? '📦 SHIPPED' : 'MARK SHIPPED'}
@@ -973,6 +975,43 @@ export default function App() {
                             {item.deliveryVerified ? '✅ DELIVERED' : 'VERIFY DELIVERY'}
                           </Text>
                         </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {activeTrackingItemId === item.id && (
+                      <View style={{ marginTop: 10, padding: 12, backgroundColor: '#111', borderWidth: 1, borderColor: '#f59e0b', borderRadius: 4 }}>
+                        <Text style={styles.inputLabel}>ENTER DISPATCH TRACKING ID:</Text>
+                        <TextInput
+                          style={styles.inputField}
+                          placeholder="USPS, UPS, FedEx number..."
+                          placeholderTextColor="#64748b"
+                          value={trackingNumberInput}
+                          onChangeText={setTrackingNumberInput}
+                        />
+                        
+                        <TouchableOpacity style={[styles.btnMediaPickCameraSpec, { paddingVertical: 10, borderColor: '#3b82f6', marginBottom: 10 }]} onPress={async () => {
+                           const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                           if (!perm.granted) return Alert.alert("Denied", "Gallery access required");
+                           setTimeout(async () => {
+                             try {
+                               const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+                               if (!res.canceled && res.assets) setTrackingImageTempUri(res.assets[0].uri);
+                             } catch(e) { Alert.alert("Gallery Error", String(e)); }
+                           }, 500);
+                        }}>
+                           <Text style={{color: '#3b82f6', fontSize: 10, fontWeight: 'bold'}}>🖼️ ATTACH RECEIPT PHOTO (OPTIONAL)</Text>
+                        </TouchableOpacity>
+                        
+                        {trackingImageTempUri && <Text style={{color: '#10b981', fontSize: 10, marginBottom: 10, fontWeight: 'bold'}}>✅ Image attached to manifest</Text>}
+                        
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                           <TouchableOpacity style={[styles.btnFormSubmit, { flex: 1, marginRight: 5, backgroundColor: '#f59e0b' }]} onPress={() => handleConfirmShipmentInput(item.id)}>
+                              <Text style={[styles.btnFormSubmitText, { color: '#000' }]}>CONFIRM DISPATCH</Text>
+                           </TouchableOpacity>
+                           <TouchableOpacity style={[styles.btnOverlayCloseX, { flex: 1, marginTop: 0, marginLeft: 5 }]} onPress={() => { setActiveTrackingItemId(null); setTrackingNumberInput(''); setTrackingImageTempUri(null); }}>
+                              <Text style={styles.closeXText}>CANCEL</Text>
+                           </TouchableOpacity>
+                        </View>
                       </View>
                     )}
 
@@ -1028,21 +1067,30 @@ export default function App() {
             <View style={{ backgroundColor: '#111111', padding: 15, borderRadius: 4, marginBottom: 20, borderWidth: 1, borderColor: '#333333' }}>
               <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: 'bold', marginBottom: 10 }}>{checkoutItem.name}</Text>
               
+              <Text style={styles.inputLabel}>DESTINATION NODE (SHIPPING ADDRESS):</Text>
+              <TextInput
+                style={styles.inputField}
+                placeholder="Enter full physical address..."
+                placeholderTextColor="#64748b"
+                value={checkoutShippingAddress}
+                onChangeText={setCheckoutShippingAddress}
+              />
+
               <Text style={styles.inputLabel}>SELECT SHIPPING PROTOCOL:</Text>
               <View style={{ flexDirection: 'row', marginBottom: 15 }}>
-                 <TouchableOpacity style={[styles.shippingBtn, buyerShippingTier === 'STANDARD' && styles.shippingBtnActive]} onPress={() => setBuyerShippingTier('STANDARD')}>
-                   <Text style={[styles.shippingBtnText, buyerShippingTier === 'STANDARD' && styles.shippingBtnTextActive]}>STANDARD (FREE)</Text>
-                 </TouchableOpacity>
-                 <TouchableOpacity style={[styles.shippingBtn, buyerShippingTier === 'PREMIUM' && styles.shippingBtnActive]} onPress={() => setBuyerShippingTier('PREMIUM')}>
-                   <Text style={[styles.shippingBtnText, buyerShippingTier === 'PREMIUM' && styles.shippingBtnTextActive]}>PREMIUM (+0.02 ETH)</Text>
-                 </TouchableOpacity>
+                <TouchableOpacity style={[styles.shippingBtn, buyerShippingTier === 'STANDARD' && styles.shippingBtnActive]} onPress={() => setBuyerShippingTier('STANDARD')}>
+                  <Text style={[styles.shippingBtnText, buyerShippingTier === 'STANDARD' && styles.shippingBtnTextActive]}>STANDARD (FREE)</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.shippingBtn, buyerShippingTier === 'PREMIUM' && styles.shippingBtnActive]} onPress={() => setBuyerShippingTier('PREMIUM')}>
+                  <Text style={[styles.shippingBtnText, buyerShippingTier === 'PREMIUM' && styles.shippingBtnTextActive]}>PREMIUM (+{checkoutItem.currency === 'USDC' ? '2.00 USDC' : '0.02 ETH'})</Text>
+                </TouchableOpacity>
               </View>
 
               <Text style={{ color: '#10b981', fontSize: 18, fontWeight: '900' }}>
-                TOTAL COST: {buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + 0.02).toFixed(3) : parseFloat(checkoutItem.buyNowPrice).toFixed(3)} ETH
+                TOTAL COST: {buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + (checkoutItem.currency === 'USDC' ? 2.00 : 0.02)).toFixed(3) : parseFloat(checkoutItem.buyNowPrice).toFixed(3)} {checkoutItem.currency}
               </Text>
               <Text style={{ color: '#10b981', fontSize: 12, fontWeight: 'bold', marginTop: 4 }}>
-                ≈ {ethToUsd(buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + 0.02) : checkoutItem.buyNowPrice)}
+                ≈ {ethToUsd(buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + (checkoutItem.currency === 'USDC' ? 2.00 : 0.02)) : checkoutItem.buyNowPrice, checkoutItem.currency === 'USDC')}
               </Text>
             </View>
           )}
@@ -1059,7 +1107,7 @@ export default function App() {
               
               <View style={{ marginBottom: 10, backgroundColor: '#111111', padding: 14, borderRadius: 4, borderLeftWidth: 4, borderLeftColor: '#3b82f6' }}>
                 <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: 'bold' }}>{selectedBountyForWork.title}</Text>
-                <Text style={{ color: '#f59e0b', fontSize: 12, marginTop: 4 }}>Payout Yield: {selectedBountyForWork.payout} ({ethToUsd(selectedBountyForWork.payout)})</Text>
+                <Text style={{ color: '#f59e0b', fontSize: 12, marginTop: 4 }}>Payout Yield: {selectedBountyForWork.payout} ({ethToUsd(selectedBountyForWork.payout, selectedBountyForWork.currency === 'USDC')})</Text>
               </View>
               
               <ScrollView style={{ flex: 1, backgroundColor: '#0a0a0a', borderWidth: 1, borderColor: '#222', borderRadius: 4, padding: 10, marginBottom: 10 }}>
@@ -1102,20 +1150,39 @@ export default function App() {
                   onChangeText={setFieldNotes} 
                 />
                 
-                <TouchableOpacity style={[styles.btnMediaPickCameraSpec, { paddingVertical: 10 }]} onPress={async () => {
-                    const cameraPerm = await ImagePicker.requestCameraPermissionsAsync();
-                    if (!cameraPerm.granted) return Alert.alert("Access Denied", "Camera clearance needed.");
-                    const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-                    if (!result.canceled && result.assets) setFieldImageUri(result.assets[0].uri);
-                }}>
-                  <Text style={styles.btnMediaPickCameraSpecText}>📸 CAPTURE PROOF VIA LENS</Text>
+                <TouchableOpacity 
+                  style={[styles.btnMediaPickCameraSpec, { paddingVertical: 15, marginVertical: 10, backgroundColor: '#000000', borderWidth: 2, borderColor: '#00f0ff', borderRadius: 4, alignItems: 'center', zIndex: 9999, elevation: 10 }]} 
+                  hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                  onPress={async () => {
+                    try {
+                      const cameraPerm = await ImagePicker.requestCameraPermissionsAsync();
+                      if (!cameraPerm.granted) {
+                        Alert.alert("Access Denied", "Camera clearance needed.");
+                        return;
+                      }
+                      setTimeout(async () => {
+                        try {
+                          const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+                          if (!result.canceled && result.assets) {
+                            setFieldImageUri(result.assets[0].uri);
+                          }
+                        } catch(e) { Alert.alert("Intent Error", String(e)); }
+                      }, 500);
+                    } catch (e) { Alert.alert("Camera Error", String(e)); }
+                  }}
+                >
+                  <Text style={{ color: '#00f0ff', fontSize: 12, fontWeight: '900', letterSpacing: 0.5 }}>📸 CAPTURE PROOF VIA LENS</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={[styles.btnMediaPickCameraSpec, { marginTop: 5, borderColor: '#f59e0b', marginBottom: 10, paddingVertical: 10 }]} onPress={async () => {
                     const libraryPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
                     if (!libraryPerm.granted) return Alert.alert("Access Denied", "Gallery clearance needed.");
-                    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
-                    if (!result.canceled && result.assets) setFieldImageUri(result.assets[0].uri);
+                    setTimeout(async () => {
+                      try {
+                        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+                        if (!result.canceled && result.assets) setFieldImageUri(result.assets[0].uri);
+                      } catch(e) { Alert.alert("Gallery Error", String(e)); }
+                    }, 500);
                 }}>
                   <Text style={[styles.btnMediaPickCameraSpecText, { color: '#f59e0b' }]}>🖼️ UPLOAD SAVED PROOF IMAGES</Text>
                 </TouchableOpacity>

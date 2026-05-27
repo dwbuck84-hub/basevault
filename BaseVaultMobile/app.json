@@ -1,27 +1,28 @@
 {
   "expo": {
-    "name": "BaseVault Terminal",
-    "slug": "basevault-terminal",
+    "name": "BaseVault",
+    "slug": "basevault",
     "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/1779467610858.png",
-    "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/1779467610858.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#000000"
-    },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.basevault.terminal",
-      "buildNumber": "1.0.0"
-    },
+    "scheme": "basevault",
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/1779467610858.png",
-        "backgroundColor": "#000000"
-      },
-      "package": "com.basevault.terminal"
+      "package": "com.basevault.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "basevaultmarket.com",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     }
   }
 }
