@@ -22,20 +22,20 @@ import {
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-// V3 MASTER CONTRACT ADDRESS
-const VAULT_CONTRACT_ADDRESS = "0xAc4630f4862Fdf6C6C064EB7c77a8062aE8acC0F"; 
+// V4 MASTER CONTRACT ADDRESS
+const VAULT_CONTRACT_ADDRESS = "0xd07bE49fe9ff12079f7619d85D5abEb236988C6A"; 
 const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
 
 const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
 
 const MARKETPLACE_ABI = [
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV3.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV4.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_ethAmountInWei","type":"uint256"}],"name":"getUsdcEquivalent","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"purchaseAsset","outputs":[],"stateMutability":"payable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"bindBounty","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"inputs":[],"name":"totalListingsCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"listings","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV3.AssetType","name":"assetType","type":"uint8"},{"internalType":"uint256","name":"price","type":"uint256"},{"internalType":"address","name":"paymentToken","type":"address"},{"internalType":"address","name":"seller","type":"address"},{"internalType":"address","name":"buyer","type":"address"},{"internalType":"enum BaseVaultMarketplaceV3.Status","name":"status","type":"uint8"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"listings","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV4.AssetType","name":"assetType","type":"uint8"},{"internalType":"uint256","name":"price","type":"uint256"},{"internalType":"address","name":"paymentToken","type":"address"},{"internalType":"address","name":"seller","type":"address"},{"internalType":"address","name":"buyer","type":"address"},{"internalType":"enum BaseVaultMarketplaceV4.Status","name":"status","type":"uint8"}],"stateMutability":"view","type":"function"},
   {"inputs":[],"name":"withdrawFees","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ];
 
@@ -68,7 +68,6 @@ interface Listing {
   governanceFlags: number; 
 }
 
-// Next.js App Router requires searchParams to be wrapped in a Suspense boundary
 export default function Home() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">INITIALIZING INTERFACE TERMINAL...</div>}>
@@ -85,7 +84,6 @@ function MarketplaceContent() {
   const { writeContractAsync } = useWriteContract();
   const contractBalance = useBalance({ address: VAULT_CONTRACT_ADDRESS });
 
-  // 📡 ROUTING DECODER: Pull identifier straight out of the URL path string
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
 
@@ -102,12 +100,10 @@ function MarketplaceContent() {
   const [ethUsdRate, setEthUsdRate] = useState<number>(3100); 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Live Real-Time Telemetry Setup
   const [activeChatGigId, setActiveChatGigId] = useState<number | null>(null);
   const [chatMessage, setChatMessage] = useState('');
   const [chatLogs, setChatLogs] = useState<Array<{sender: string, text: string}>>([]);
 
-  // Form States
   const [formType, setFormType] = useState<'physical_asset' | 'smart_bounty' | 'tokenized_nft'>('physical_asset');
   const [formTitle, setFormTitle] = useState('');
   const [formCategory, setFormCategory] = useState('Sneakers & Apparel');
@@ -124,7 +120,6 @@ function MarketplaceContent() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  // Sync historical messages and open real-time cross-machine sockets
   useEffect(() => {
     if (!activeChatGigId) return;
 
@@ -159,7 +154,6 @@ function MarketplaceContent() {
     };
   }, [activeChatGigId]);
 
-  // Price Feed Oracle
   useEffect(() => {
     const fetchCurrentPriceFeed = async () => {
       try {
@@ -175,7 +169,6 @@ function MarketplaceContent() {
     return () => clearInterval(priceTickerInterval);
   }, []);
 
-  // Contract Read Methods
   const { data: totalListingsCount, refetch: reloadContractCount } = useReadContract({
     address: VAULT_CONTRACT_ADDRESS,
     abi: MARKETPLACE_ABI,
@@ -250,15 +243,22 @@ function MarketplaceContent() {
     };
   };
 
-  // V3 LIVE PARITY FEE CALCULATOR (Synced with Mobile App)
+  // V4 LIVE PARITY FEE CALCULATOR (Synced with Mobile App)
   const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC', formAssetType: 'physical_asset' | 'smart_bounty' | 'tokenized_nft') => {
     const numericPrice = parseFloat(priceInput) || 0;
     const usdValueOfItem = currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate;
 
+    // 1. BOUNTY ROUTE (0.002 ETH Flat)
     if (formAssetType === 'smart_bounty') {
-      return currency === 'ETH' ? 0.0025 : (0.0025 * ethUsdRate);
+      return currency === 'ETH' ? 0.002 : (0.002 * ethUsdRate);
     }
     
+    // 2. NFT ROUTE (0.0015 ETH Flat)
+    if (formAssetType === 'tokenized_nft') {
+      return currency === 'ETH' ? 0.0015 : (0.0015 * ethUsdRate);
+    }
+
+    // 3. PHYSICAL ASSET ROUTE (Scales at $500)
     if (usdValueOfItem > 500) {
       return currency === 'ETH' ? (numericPrice * 0.015) : (numericPrice * 0.015);
     } else {
@@ -331,7 +331,8 @@ function MarketplaceContent() {
           value: valueInWei 
         });
       } else {
-        const feeInWei = parseEther((exactFeeRequired / ethUsdRate).toFixed(18));
+        const feeConvertedToEth = exactFeeRequired / ethUsdRate; 
+        const feeInWei = parseEther(feeConvertedToEth.toFixed(18));
         
         let totalUsdcNeeded = 0;
         if (formType === 'smart_bounty') totalUsdcNeeded += parseFloat(formPrice);
