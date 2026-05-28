@@ -21,8 +21,35 @@
             "BROWSABLE",
             "DEFAULT"
           ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "basevaultmarket.com",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "57886bf3-0f41-4f26-a780-4254bdc8a449"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/57886bf3-0f41-4f26-a780-4254bdc8a449"
+    },
+    "ios": {}
   }
 }

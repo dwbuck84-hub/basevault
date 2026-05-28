@@ -5,21 +5,20 @@ import * as ImagePicker from 'expo-image-picker';
 
 const projectId = '23691e253e4736fe086c7eb4b094ca97';
 
-// V3 MASTER CONTRACT & USDC ORACLE
-const CONTRACT_ADDRESS = '0xAc4630f4862Fdf6C6C064EB7c77a8062aE8acC0F';
+// V4 MASTER CONTRACT & USDC ORACLE
+const CONTRACT_ADDRESS = '0xd07bE49fe9ff12079f7619d85D5abEb236988C6A';
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
-// V3 ABI
+// V4 ABI
 const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
 const MARKETPLACE_ABI = [
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV3.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV4.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_ethAmountInWei","type":"uint256"}],"name":"getUsdcEquivalent","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"purchaseAsset","outputs":[],"stateMutability":"payable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"bindBounty","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ];
 
-// Native UI branding injection
 const baseVaultLogo = require('./assets/1779467610858.png');
 
 interface WalletNFT { id: string; name: string; collection: string; tokenId: string; imageUri: string; }
@@ -68,19 +67,31 @@ export default function App() {
     return `$${(num * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }, [ethUsdRate]);
 
-  // V3 LIVE PARITY FEE CALCULATOR
+  // V4 FIXED PARITY FEE CALCULATOR (Always returns core ETH required)
   const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC', formAssetType: string) => {
     const numericPrice = parseFloat(priceInput) || 0;
     const usdValueOfItem = currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate;
     
-    if (formAssetType === 'BOUNTY') {
-      return currency === 'ETH' ? 0.0025 : (0.0025 * ethUsdRate);
+    // 1. BOUNTY ROUTE (0.002 ETH Flat)
+    if (formAssetType === 'BOUNTY' || formAssetType === 'smart_bounty') {
+      return 0.002;
     }
     
+    // 2. NFT ROUTE (0.0015 ETH Flat)
+    if (formAssetType === 'NFT' || formAssetType === 'tokenized_nft') {
+      return 0.0015;
+    }
+
+    // 3. PHYSICAL ASSET ROUTE (Scales at $500 threshold)
     if (usdValueOfItem > 500) {
-      return currency === 'ETH' ? (numericPrice * 0.015) : (numericPrice * 0.015);
+      if (currency === 'ETH') {
+        return numericPrice * 0.015;
+      } else {
+        const feeInUsd = numericPrice * 0.015;
+        return feeInUsd / ethUsdRate;
+      }
     } else {
-      return currency === 'ETH' ? 0.0015 : (0.0015 * ethUsdRate);
+      return 0.0015;
     }
   }, [ethUsdRate]);
 
@@ -139,7 +150,6 @@ export default function App() {
   const [sandboxFileName, setSandboxFileName] = useState<string | null>(null);
   const [chatMessageText, setChatMessageText] = useState('');
   
-  // STRIPPED LEDGER ARRAYS FOR PRODUCTION
   const [bountyChats, setBountyChats] = useState<Record<string, ChatMessage[]>>({});
   const [ownedNfts] = useState<WalletNFT[]>([]);
   const [soldItems, setSoldItems] = useState<SoldItem[]>([]);
@@ -293,12 +303,12 @@ export default function App() {
 
   const handleUnifiedSubmit = () => {
     const executeListing = () => {
-      const exactFeeCalculated = calculateUnifiedFee(listingType === 'BOUNTY' ? bountyPayout : buyNowPrice, selectedCurrency, listingType);
+      const exactFeeEth = calculateUnifiedFee(listingType === 'BOUNTY' ? bountyPayout : buyNowPrice, selectedCurrency, listingType);
       
       if (listingType === 'BOUNTY') {
         if (!title || !bountyPayout || !description) return Alert.alert("Input Error", "Provide bounty title, info description, and payout reward.");
         setBounties(prev => [{ id: "B-" + Date.now(), title, description, payout: bountyPayout + " " + selectedCurrency, currency: selectedCurrency, location: locationOrScope || 'Local Node', status: 'OPEN_NODE', deployerRank: 'Rank New [100%]' }, ...prev]);
-        Alert.alert("Bounty Posted", `Listing verified and ${selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC` : `${exactFeeCalculated.toFixed(4)} ETH`} protocol fee locked.`);
+        Alert.alert("Bounty Posted", `Listing verified and ${exactFeeEth.toFixed(4)} ETH network creation fee locked.`);
         setActiveTab('BOUNTIES');
       } else {
         let finalName = title;
@@ -316,15 +326,9 @@ export default function App() {
 
         if (listingType === 'PHYSICAL' && shieldStatus !== 'VERIFIED') {
           finalMeta = "📦 Unverified Merchant Entry";
-          setAiBotLogs(prev => [
-            ...prev,
-            { id: "business-bypass-" + Date.now(), sender: 'SYSTEM_AI', text: "⚠️ [NOTICE]: Bypassed automated compliance scanning frame workflow. Fast-tracking standard asset list container execution. Note: This item does not qualify for an on-chain verification badge.", timestamp: 'AUDIT' }
-          ]);
         } else if (listingType === 'PHYSICAL') {
           finalMeta = `🛡️ Certified: ${shieldConditionGrade} Condition | Index: ${shieldAuthenticityIndex}%`;
         }
-
-        const listingFeeText = listingType === 'NFT' ? '1.5% Listing Fee' : (selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC Parity Listing Fee` : `${exactFeeCalculated.toFixed(4)} ETH Listing Fee`);
 
         const newListing: ItemLedger = {
           id: "BV-LOCAL-" + Date.now(),
@@ -344,7 +348,7 @@ export default function App() {
         };
 
         setMarketItems(prev => [newListing, ...prev]);
-        Alert.alert("Asset Listed", `Escrow layers deployed. ${listingFeeText} applied.`);
+        Alert.alert("Asset Listed", `Escrow layers deployed. ${exactFeeEth.toFixed(4)} ETH fee routed.`);
       }
       setTitle(''); setDescription(''); setListPrice(''); setBuyNowPrice(''); setBountyPayout(''); setLocationOrScope(''); setSelectedNft(null); setCustomImages([]); setFormVisible(false); setShieldStatus('IDLE');
     };
@@ -360,7 +364,7 @@ export default function App() {
             onPress: () => {
               Alert.alert(
                 "Finalizing Deployment",
-                "Step 2: Broadcasting Escrow logic to the BaseVault V3 Market.",
+                "Step 2: Broadcasting Escrow logic to the BaseVault V4 Market.",
                 [{ text: "Confirm", onPress: executeListing }]
               );
             } 
@@ -493,14 +497,18 @@ export default function App() {
     setUnsoldItems(prev => prev.filter(u => u.id !== item.id));
   };
 
+  // V4 DISCLOSURE CORRECTION
   const getDynamicFeeDisclosureText = () => {
-    const exactFeeCalculated = calculateUnifiedFee(listingType === 'BOUNTY' ? bountyPayout : buyNowPrice, selectedCurrency, listingType);
+    const exactFeeEth = calculateUnifiedFee(listingType === 'BOUNTY' ? bountyPayout : buyNowPrice, selectedCurrency, listingType);
+    const exactFeeUsd = exactFeeEth * ethUsdRate;
     
-    if (listingType === 'BOUNTY') return `Protocol Fees: ${selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC` : `${exactFeeCalculated.toFixed(4)} ETH`} Base Creation Fee | 4% Escrow Release Fee.`;
-    if (listingType === 'NFT') return 'Protocol Fees: 1.5% Listing Fee | 4% Escrow Release Fee upon confirmed transfer.';
-    
-    if (selectedCurrency === 'USDC') return `Protocol Fees: $${exactFeeCalculated.toFixed(2)} USDC Parity Listing Fee | 4% Escrow Release Fee.`;
-    return `Protocol Fees: ${exactFeeCalculated.toFixed(4)} ETH Base Listing Fee | 4% Escrow Release Fee.`;
+    if (listingType === 'BOUNTY') {
+      return `Protocol Fees: ${exactFeeEth.toFixed(4)} ETH (~$${exactFeeUsd.toFixed(2)}) Flat Creation Fee | 4% Escrow Release Fee.`;
+    }
+    if (listingType === 'NFT') {
+      return `Protocol Fees: ${exactFeeEth.toFixed(4)} ETH (~$${exactFeeUsd.toFixed(2)}) Flat Listing Fee | 4% Escrow Release Fee.`;
+    }
+    return `Protocol Fees: ${exactFeeEth.toFixed(4)} ETH (~$${exactFeeUsd.toFixed(2)}) Layer Listing Fee | 4% Escrow Release Fee.`;
   };
 
   const renderAIBotConsole = () => (
@@ -1234,7 +1242,7 @@ const styles = StyleSheet.create({
   formAccordionTitle: { color: '#00f0ff', fontSize: 10, fontWeight: '900', letterSpacing: 0.2 },
   modalViewportContainerSpec: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.95)', justifyContent: 'center', padding: 20 },
   overlayHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#333333', paddingBottom: 10, marginBottom: 14 },
-  overlayTitleText: { color: '#00f0ff', fontSize: 18, fontWeight: '900', fontFamily: 'monospace', flex: 1, marginRight: 8, textAlign: 'center' },
+  overlayTitleText: { color: '#00f0ff', fontSize: 18, fontWeight: '900', fontFamily: 'monospace', flex: 1, marginRight: 8, textAlgin: 'center' },
   btnOverlayCloseX: { backgroundColor: '#ef4444', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 4, marginTop: 10 },
   closeXText: { color: '#ffffff', fontSize: 11, fontWeight: 'bold', textAlign: 'center' },
   inputLabel: { color: '#ffffff', fontSize: 9, fontWeight: 'bold', marginBottom: 6 },
