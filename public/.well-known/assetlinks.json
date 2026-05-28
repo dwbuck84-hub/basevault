@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.basevault.app",
+      "sha256_cert_fingerprints": [
+      "E6:5F:92:68:0B:97:21:FD:34:76:78:D1:27:1A:0D:E8:54:89:A1:98:F5:F7:3A:FB:CD:D4:63:08:C9:1C:85:46
+      ]
+    }
+  }
+]

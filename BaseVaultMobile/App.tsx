@@ -5,17 +5,18 @@ import * as ImagePicker from 'expo-image-picker';
 
 const projectId = '23691e253e4736fe086c7eb4b094ca97';
 
-// V2 MASTER CONTRACT & USDC
-const CONTRACT_ADDRESS = '0x5b21FA736498a27D2f12745c50Cb7C69d41dC281';
+// V3 MASTER CONTRACT & USDC ORACLE
+const CONTRACT_ADDRESS = '0xAc4630f4862Fdf6C6C064EB7c77a8062aE8acC0F';
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
-// READY FOR WEBSOCKET / PROVIDER INTEGRATION
+// V3 ABI
 const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
 const MARKETPLACE_ABI = [
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV2.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV3.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_ethAmountInWei","type":"uint256"}],"name":"getUsdcEquivalent","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"purchaseAsset","outputs":[],"stateMutability":"payable","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"}
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"bindBounty","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ];
 
 // Native UI branding injection
@@ -67,15 +68,19 @@ export default function App() {
     return `$${(num * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }, [ethUsdRate]);
 
-  // LIVE PARITY FEE CALCULATOR
-  const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC') => {
+  // V3 LIVE PARITY FEE CALCULATOR
+  const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC', formAssetType: string) => {
     const numericPrice = parseFloat(priceInput) || 0;
-    const isHighValue = (currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate) > 500;
+    const usdValueOfItem = currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate;
     
-    if (currency === 'ETH') {
-      return isHighValue ? (numericPrice * 0.015) : 0.015;
+    if (formAssetType === 'BOUNTY') {
+      return currency === 'ETH' ? 0.0025 : (0.0025 * ethUsdRate);
+    }
+    
+    if (usdValueOfItem > 500) {
+      return currency === 'ETH' ? (numericPrice * 0.015) : (numericPrice * 0.015);
     } else {
-      return isHighValue ? (numericPrice * 0.015) : (0.015 * ethUsdRate);
+      return currency === 'ETH' ? 0.0015 : (0.0015 * ethUsdRate);
     }
   }, [ethUsdRate]);
 
@@ -191,7 +196,7 @@ export default function App() {
     setTimeout(() => {
       let botResponseText = '[HELP_BOT] Protocol queries mapped successfully.';
       if (currentQueryText.toLowerCase().includes('shipping') || currentQueryText.toLowerCase().includes('premium')) {
-        botResponseText = 'HELP BOT RESPONSE: Buyers allocate their custom shipping tiers inside the checkout window overlay, injecting a dynamic +0.02 ETH holding collateral upcharge onto premium shipments.';
+        botResponseText = 'HELP BOT RESPONSE: Buyers allocate their custom shipping tiers inside the checkout window overlay, injecting a dynamic holding collateral upcharge onto premium shipments.';
       }
       setAiBotLogs(prev => [...prev, { id: "ai-r-" + Date.now(), sender: 'SYSTEM_AI', text: botResponseText, timestamp: 'RESPONSE' }]);
       setAiBotLoading(false);
@@ -288,10 +293,12 @@ export default function App() {
 
   const handleUnifiedSubmit = () => {
     const executeListing = () => {
+      const exactFeeCalculated = calculateUnifiedFee(listingType === 'BOUNTY' ? bountyPayout : buyNowPrice, selectedCurrency, listingType);
+      
       if (listingType === 'BOUNTY') {
         if (!title || !bountyPayout || !description) return Alert.alert("Input Error", "Provide bounty title, info description, and payout reward.");
         setBounties(prev => [{ id: "B-" + Date.now(), title, description, payout: bountyPayout + " " + selectedCurrency, currency: selectedCurrency, location: locationOrScope || 'Local Node', status: 'OPEN_NODE', deployerRank: 'Rank New [100%]' }, ...prev]);
-        Alert.alert("Bounty Posted", `Listing verified and ${selectedCurrency === 'USDC' ? '$2.00 USDC' : '0.02 ETH'} platform creation fee executed.`);
+        Alert.alert("Bounty Posted", `Listing verified and ${selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC` : `${exactFeeCalculated.toFixed(4)} ETH`} protocol fee locked.`);
         setActiveTab('BOUNTIES');
       } else {
         let finalName = title;
@@ -317,8 +324,7 @@ export default function App() {
           finalMeta = `🛡️ Certified: ${shieldConditionGrade} Condition | Index: ${shieldAuthenticityIndex}%`;
         }
 
-        const exactFeeCalculated = calculateUnifiedFee(buyNowPrice, selectedCurrency);
-        const listingFeeText = listingType === 'NFT' ? '1.5% Listing Fee' : (selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC Parity Listing Fee` : `${exactFeeCalculated.toFixed(3)} ETH Listing Fee`);
+        const listingFeeText = listingType === 'NFT' ? '1.5% Listing Fee' : (selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC Parity Listing Fee` : `${exactFeeCalculated.toFixed(4)} ETH Listing Fee`);
 
         const newListing: ItemLedger = {
           id: "BV-LOCAL-" + Date.now(),
@@ -354,7 +360,7 @@ export default function App() {
             onPress: () => {
               Alert.alert(
                 "Finalizing Deployment",
-                "Step 2: Broadcasting Escrow logic to the BaseVault V2 Market.",
+                "Step 2: Broadcasting Escrow logic to the BaseVault V3 Market.",
                 [{ text: "Confirm", onPress: executeListing }]
               );
             } 
@@ -395,7 +401,7 @@ export default function App() {
 
     const executePurchase = () => {
       let basePriceNum = parseFloat(checkoutItem.buyNowPrice) || 0;
-      let shippingFee = checkoutItem.currency === 'USDC' ? 2.00 : 0.02;
+      let shippingFee = checkoutItem.currency === 'USDC' ? 2.00 : 0.001;
       let absoluteFinalPrice = buyerShippingTier === 'PREMIUM' ? (basePriceNum + shippingFee).toFixed(3) : basePriceNum.toFixed(3);
       
       setSoldItems(prev => [{ 
@@ -488,11 +494,13 @@ export default function App() {
   };
 
   const getDynamicFeeDisclosureText = () => {
-    if (listingType === 'BOUNTY') return `Protocol Fees: ${selectedCurrency === 'USDC' ? '$2.00 USDC' : '0.02 ETH'} Listing Fee | 4% Escrow Release Fee.`;
+    const exactFeeCalculated = calculateUnifiedFee(listingType === 'BOUNTY' ? bountyPayout : buyNowPrice, selectedCurrency, listingType);
+    
+    if (listingType === 'BOUNTY') return `Protocol Fees: ${selectedCurrency === 'USDC' ? `$${exactFeeCalculated.toFixed(2)} USDC` : `${exactFeeCalculated.toFixed(4)} ETH`} Base Creation Fee | 4% Escrow Release Fee.`;
     if (listingType === 'NFT') return 'Protocol Fees: 1.5% Listing Fee | 4% Escrow Release Fee upon confirmed transfer.';
-    const feeInEthOrUsdc = calculateUnifiedFee(buyNowPrice, selectedCurrency);
-    if (selectedCurrency === 'USDC') return `Protocol Fees: $${feeInEthOrUsdc.toFixed(2)} USDC Parity Listing Fee | 4% Escrow Release Fee.`;
-    return `Protocol Fees: ${feeInEthOrUsdc.toFixed(3)} ETH Base Listing Fee | 4% Escrow Release Fee.`;
+    
+    if (selectedCurrency === 'USDC') return `Protocol Fees: $${exactFeeCalculated.toFixed(2)} USDC Parity Listing Fee | 4% Escrow Release Fee.`;
+    return `Protocol Fees: ${exactFeeCalculated.toFixed(4)} ETH Base Listing Fee | 4% Escrow Release Fee.`;
   };
 
   const renderAIBotConsole = () => (
@@ -1082,15 +1090,15 @@ export default function App() {
                   <Text style={[styles.shippingBtnText, buyerShippingTier === 'STANDARD' && styles.shippingBtnTextActive]}>STANDARD (FREE)</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.shippingBtn, buyerShippingTier === 'PREMIUM' && styles.shippingBtnActive]} onPress={() => setBuyerShippingTier('PREMIUM')}>
-                  <Text style={[styles.shippingBtnText, buyerShippingTier === 'PREMIUM' && styles.shippingBtnTextActive]}>PREMIUM (+{checkoutItem.currency === 'USDC' ? '2.00 USDC' : '0.02 ETH'})</Text>
+                  <Text style={[styles.shippingBtnText, buyerShippingTier === 'PREMIUM' && styles.shippingBtnTextActive]}>PREMIUM (+{checkoutItem.currency === 'USDC' ? '2.00 USDC' : '0.001 ETH'})</Text>
                 </TouchableOpacity>
               </View>
 
               <Text style={{ color: '#10b981', fontSize: 18, fontWeight: '900' }}>
-                TOTAL COST: {buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + (checkoutItem.currency === 'USDC' ? 2.00 : 0.02)).toFixed(3) : parseFloat(checkoutItem.buyNowPrice).toFixed(3)} {checkoutItem.currency}
+                TOTAL COST: {buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + (checkoutItem.currency === 'USDC' ? 2.00 : 0.001)).toFixed(3) : parseFloat(checkoutItem.buyNowPrice).toFixed(3)} {checkoutItem.currency}
               </Text>
               <Text style={{ color: '#10b981', fontSize: 12, fontWeight: 'bold', marginTop: 4 }}>
-                ≈ {ethToUsd(buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + (checkoutItem.currency === 'USDC' ? 2.00 : 0.02)) : checkoutItem.buyNowPrice, checkoutItem.currency === 'USDC')}
+                ≈ {ethToUsd(buyerShippingTier === 'PREMIUM' ? (parseFloat(checkoutItem.buyNowPrice) + (checkoutItem.currency === 'USDC' ? 2.00 : 0.001)) : checkoutItem.buyNowPrice, checkoutItem.currency === 'USDC')}
               </Text>
             </View>
           )}

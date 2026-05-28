@@ -2,11 +2,11 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, Suspense } from 'react';
-import { parseEther, formatEther, createPublicClient, http } from 'viem';
+import { useState, useEffect, Suspense, useCallback } from 'react';
+import { parseEther, formatEther, parseUnits, formatUnits, createPublicClient, http } from 'viem';
 import { base } from 'wagmi/chains';
-import { supabase } from '../lib/supabaseClient'; // Real-time client module
-import { useSearchParams } from 'next/navigation'; // Next.js App Router query handler
+import { supabase } from '../lib/supabaseClient'; 
+import { useSearchParams } from 'next/navigation'; 
 import { 
   useAccount, 
   useConnect, 
@@ -18,11 +18,26 @@ import {
   useSwitchChain
 } from 'wagmi';
 
-import MARKETPLACE_ABI from '../constants/abi.json';
+// BASE MAINNET USDC & ORACLE
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-// 🔥 BACKEND INTEGRATION IMPORTERS (SIBLING COMPONENT PATH)
-import SupportBot from './components/SupportBot';
-import IntegratedAiAppraiser from './components/IntegratedAiAppraiser';
+// V3 MASTER CONTRACT ADDRESS
+const VAULT_CONTRACT_ADDRESS = "0xAc4630f4862Fdf6C6C064EB7c77a8062aE8acC0F"; 
+const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
+
+const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
+
+const MARKETPLACE_ABI = [
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV3.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_ethAmountInWei","type":"uint256"}],"name":"getUsdcEquivalent","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"purchaseAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"bindBounty","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"totalListingsCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"listings","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV3.AssetType","name":"assetType","type":"uint8"},{"internalType":"uint256","name":"price","type":"uint256"},{"internalType":"address","name":"paymentToken","type":"address"},{"internalType":"address","name":"seller","type":"address"},{"internalType":"address","name":"buyer","type":"address"},{"internalType":"enum BaseVaultMarketplaceV3.Status","name":"status","type":"uint8"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"withdrawFees","outputs":[],"stateMutability":"nonpayable","type":"function"}
+];
 
 interface Listing {
   id: number;
@@ -33,12 +48,14 @@ interface Listing {
   bidsCount: number;
   category: string;
   seller: string;
+  buyer: string;
+  paymentToken: string;
   rating: number;
   ratingCount: number; 
   description: string;
   images: string[];
   duration?: string;
-  status: 'Active' | 'Sold' | 'Unsold' | 'Quarantined'; 
+  status: 'Active' | 'EscrowLocked' | 'Settled' | 'Quarantined'; 
   highestBidder?: string; 
   nftContract?: string;
   nftTokenId?: string;
@@ -51,9 +68,7 @@ interface Listing {
   governanceFlags: number; 
 }
 
-const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
-const VAULT_CONTRACT_ADDRESS = "0x4bEa1744818C8B0Bb744e3524670F27253AE7aA5";
-
+// Next.js App Router requires searchParams to be wrapped in a Suspense boundary
 export default function Home() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">INITIALIZING INTERFACE TERMINAL...</div>}>
@@ -67,10 +82,10 @@ function MarketplaceContent() {
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
-  const { data: txHash, writeContract, isPending: isTxPending } = useWriteContract();
-  const { isSuccess: isTxConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+  const { writeContractAsync } = useWriteContract();
   const contractBalance = useBalance({ address: VAULT_CONTRACT_ADDRESS });
 
+  // 📡 ROUTING DECODER: Pull identifier straight out of the URL path string
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
 
@@ -85,6 +100,7 @@ function MarketplaceContent() {
   const [isUploadingToIpfs, setIsUploadingToIpfs] = useState<Record<number, boolean>>({});
   const [deliveryPayloads, setDeliveryPayloads] = useState<Record<number, string>>({});
   const [ethUsdRate, setEthUsdRate] = useState<number>(3100); 
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Live Real-Time Telemetry Setup
   const [activeChatGigId, setActiveChatGigId] = useState<number | null>(null);
@@ -98,6 +114,7 @@ function MarketplaceContent() {
   const [formPrice, setFormPrice] = useState(''); 
   const [formBuyNowPrice, setFormBuyNowPrice] = useState('');
   const [formDescription, setFormDescription] = useState('');
+  const [selectedCurrency, setSelectedCurrency] = useState<'ETH' | 'USDC'>('ETH');
 
   const itemCategories = ["Sneakers & Apparel", "Luxury Chronographs", "Hardware Components", "Vintage Electronics", "Collectibles & Art Assets"];
   const bountyCategories = ["Software Development", "Interface Design", "Smart Contract Audit", "Digital Content Generation", "Protocol Optimization"];
@@ -107,6 +124,7 @@ function MarketplaceContent() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
+  // Sync historical messages and open real-time cross-machine sockets
   useEffect(() => {
     if (!activeChatGigId) return;
 
@@ -141,6 +159,7 @@ function MarketplaceContent() {
     };
   }, [activeChatGigId]);
 
+  // Price Feed Oracle
   useEffect(() => {
     const fetchCurrentPriceFeed = async () => {
       try {
@@ -156,6 +175,7 @@ function MarketplaceContent() {
     return () => clearInterval(priceTickerInterval);
   }, []);
 
+  // Contract Read Methods
   const { data: totalListingsCount, refetch: reloadContractCount } = useReadContract({
     address: VAULT_CONTRACT_ADDRESS,
     abi: MARKETPLACE_ABI,
@@ -179,25 +199,27 @@ function MarketplaceContent() {
         }) as any;
 
         if (structData && Number(structData.status) !== 3) {
-          const typeMapping: ('physical_asset' | 'smart_bounty' | 'tokenized_nft')[] = ['physical_asset', 'smart_bounty', 'tokenized_nft'];
+          const isUsdc = structData.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+          const formattedPrice = isUsdc ? formatUnits(structData.price, 6) : formatEther(structData.price);
+          
           activeChainListings.push({
             id: i,
-            type: typeMapping[Number(structData.assetType ?? 0)],
+            type: ['physical_asset', 'smart_bounty', 'tokenized_nft'][Number(structData.assetType)] as 'physical_asset' | 'smart_bounty' | 'tokenized_nft',
             title: structData.title || `Asset Node #${i}`,
-            price: formatEther(structData.price ?? BigInt(0)),
-            buyNowPrice: structData.buyNowPrice && structData.buyNowPrice > BigInt(0) ? formatEther(structData.buyNowPrice) : undefined,
-            bidsCount: Number(structData.bidsCount ?? 0),
-            category: structData.category || "General Registry",
+            price: formattedPrice,
+            buyNowPrice: undefined, 
+            paymentToken: structData.paymentToken,
+            bidsCount: 0,
+            category: "General Registry",
             seller: structData.seller,
-            rating: Number(structData.rating ?? 50) / 10,
-            ratingCount: Number(structData.ratingCount ?? 0),
-            description: structData.description || "",
-            images: structData.images && structData.images.length > 0 ? structData.images : ["https://picsum.photos/id/24/800/600"],
-            status: ['Active', 'Sold', 'Unsold', 'Quarantined'][Number(structData.status ?? 0)] as any,
-            escrowReleased: Boolean(structData.escrowReleased),
-            watermarkedFilePreview: structData.deliveryHash ? "DECENTRALIZED ENCRYPTED PACKAGE INSTANCE LOCKED IN ESCOW" : undefined,
-            cleanFileUrl: structData.deliveryHash ? `https://gateway.pinata.cloud/ipfs/${structData.deliveryHash}` : undefined,
-            governanceFlags: Number(structData.governanceFlags ?? 0)
+            buyer: structData.buyer,
+            rating: 5.0,
+            ratingCount: 0,
+            description: "",
+            images: ["https://picsum.photos/id/24/800/600"],
+            status: ['Active', 'EscrowLocked', 'Settled', 'Quarantined'][Number(structData.status)] as any,
+            escrowReleased: Number(structData.status) === 2,
+            governanceFlags: 0
           });
         }
       } catch (err) {
@@ -208,50 +230,41 @@ function MarketplaceContent() {
   };
 
   useEffect(() => { sourceLiveRegistry(); }, [totalListingsCount, visibleCount]);
-  useEffect(() => { if (isTxConfirmed) { reloadContractCount(); sourceLiveRegistry(); } }, [isTxConfirmed]);
 
-  const verifyActiveNetworkChain = (): boolean => {
-    if (chainId !== base.id) {
-      alert("⚠️ NETWORK ALIGNMENT ERROR:\n\nYour wallet is connected to an alternate chain sequence. Forcing interface lock until network is aligned onto Base.");
-      if (switchChain) switchChain({ chainId: base.id });
-      return false;
-    }
-    return true;
-  };
-
-  const handleAdminWithdrawLiquidity = () => {
-    if (!mounted || !isConnected) return;
-    if (address?.toLowerCase() !== DEVELOPER_ADMIN_ADDRESS.toLowerCase()) {
-      alert("Security Error: Administrative operation revoked. Missing on-chain key signatures.");
-      return;
-    }
-    if (!verifyActiveNetworkChain()) return;
-    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'withdrawFees' });
-  };
-
-  const convertEthToUsd = (eth: string) => {
-    const val = parseFloat(eth);
+  const convertToUsd = (amount: string, isUsdc: boolean) => {
+    if (isUsdc) return parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const val = parseFloat(amount);
     return isNaN(val) ? '0.00' : (val * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
-  const calculateListingFee = (type: 'physical_asset' | 'smart_bounty' | 'tokenized_nft', priceStr: string) => {
-    if (type === 'smart_bounty') return { eth: '0.0200', usd: convertEthToUsd('0.02') };
-    const priceEth = parseFloat(priceStr);
-    if (isNaN(priceEth)) return { eth: '0.0000', usd: '0.00' };
-    const priceUsd = priceEth * ethUsdRate;
-    return priceUsd > 500 ? { eth: (priceEth * 0.015).toFixed(4), usd: (priceUsd * 0.015).toFixed(2) } : { eth: '0.0025', usd: convertEthToUsd('0.0025') };
-  };
-
-  const calculateMarketplaceTake = (priceStr: string) => {
+  const calculateMarketplaceTake = (priceStr: string, isUsdc: boolean) => {
     const totalAmt = parseFloat(priceStr);
     if (isNaN(totalAmt)) return { sellerCut: '0.0000', platformCut: '0.0000', sellerUsd: '0.00', platformUsd: '0.00' };
+    const sellerAmt = totalAmt * 0.96;
+    const platAmt = totalAmt * 0.04;
     return {
-      sellerCut: (totalAmt * 0.96).toFixed(4),
-      platformCut: (totalAmt * 0.04).toFixed(4),
-      sellerUsd: (totalAmt * 0.96 * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      platformUsd: (totalAmt * 0.04 * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      sellerCut: sellerAmt.toFixed(4),
+      platformCut: platAmt.toFixed(4),
+      sellerUsd: isUsdc ? sellerAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (sellerAmt * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      platformUsd: isUsdc ? platAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (platAmt * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     };
   };
+
+  // V3 LIVE PARITY FEE CALCULATOR (Synced with Mobile App)
+  const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC', formAssetType: 'physical_asset' | 'smart_bounty' | 'tokenized_nft') => {
+    const numericPrice = parseFloat(priceInput) || 0;
+    const usdValueOfItem = currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate;
+
+    if (formAssetType === 'smart_bounty') {
+      return currency === 'ETH' ? 0.0025 : (0.0025 * ethUsdRate);
+    }
+    
+    if (usdValueOfItem > 500) {
+      return currency === 'ETH' ? (numericPrice * 0.015) : (numericPrice * 0.015);
+    } else {
+      return currency === 'ETH' ? 0.0015 : (0.0015 * ethUsdRate);
+    }
+  }, [ethUsdRate]);
 
   const handleFreelancerSandboxUpload = async (gigId: number, file: File) => {
     if (!file) return;
@@ -274,87 +287,157 @@ function MarketplaceContent() {
     }
   };
 
-  const handleBroadcastDeliveryProof = (gigId: number) => {
-    if (!verifyActiveNetworkChain()) return;
+  const handleBroadcastDeliveryProof = async (gigId: number) => {
+    if (chainId !== base.id) return alert("Switch to Base Mainnet");
     const fileHash = deliveryPayloads[gigId];
     if (!fileHash) return alert("No cryptographic payload attached to node pipeline.");
-    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'submitBountyPayload', args: [BigInt(gigId), fileHash] });
-  };
+    
+    const senderLabel = address ? address.slice(0,6) + "..." + address.slice(-4) : "SYSTEM";
+    const deliveryMessage = `📦 SECURE PAYLOAD DELIVERED: https://gateway.pinata.cloud/ipfs/${fileHash}`;
+    
+    const { error } = await supabase
+      .from('marketplace_chats')
+      .insert([{ gig_id: gigId, sender: senderLabel, message_text: deliveryMessage }]);
 
-  const runSecurityComplianceScanner = async (title: string, desc: string): Promise<boolean> => {
-    const illegalBlacklistArr = ['gun', 'rifle', 'glock', 'weapon', 'ammo', 'drug', 'cocaine', 'fentanyl', 'porn', 'xxx', 'organ', 'human'];
-    const compositeCleanText = `${title.toLowerCase()} ${desc.toLowerCase()}`;
-    for (const forbiddenWord of illegalBlacklistArr) {
-      if (new RegExp(`\\b${forbiddenWord}\\b|${forbiddenWord}`, 'i').test(compositeCleanText)) {
-        alert(`❌ POLICY COMPLIANCE EXCEPTION:\n\nProhibited entry parameters encountered [Detected: "${forbiddenWord}"].`);
-        return false; 
-      }
+    if (error) {
+      console.error("Telemetry breakdown:", error);
+      alert("Failed to broadcast delivery.");
+    } else {
+      alert("✅ Payload broadcasted to buyer via encrypted telemetry.");
     }
-    return true; 
-  };
-
-  const processAiListingDeployment = async (generatedTitle: string, selectedPriceEth: string, generatedDescription: string, category: string) => {
-    if (!verifyActiveNetworkChain()) return;
-    const passedCompliance = await runSecurityComplianceScanner(generatedTitle, generatedDescription);
-    if (!passedCompliance) return;
-
-    const fee = calculateListingFee('physical_asset', selectedPriceEth);
-    writeContract({ 
-      address: VAULT_CONTRACT_ADDRESS, 
-      abi: MARKETPLACE_ABI, 
-      functionName: 'listAsset', 
-      args: [BigInt(Date.now()), 0, parseEther(selectedPriceEth || '0')], 
-      value: parseEther(fee.eth) 
-    });
   };
 
   const handleCreateListing = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!verifyActiveNetworkChain()) return;
-    const passedCompliance = await runSecurityComplianceScanner(formTitle, formDescription);
-    if (!passedCompliance) return;
+    if (chainId !== base.id) return alert("Switch to Base Mainnet");
+    setIsProcessing(true);
 
-    const fee = calculateListingFee(formType, formPrice);
-    const typeMapping = { physical_asset: 0, smart_bounty: 1, tokenized_nft: 2 };
-    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'listAsset', args: [BigInt(Date.now()), typeMapping[formType], parseEther(formPrice || '0')], value: parseEther(fee.eth) });
+    try {
+      const assetTypeEnum = { physical_asset: 0, smart_bounty: 1, tokenized_nft: 2 }[formType];
+      const newId = BigInt(Date.now());
+      const exactFeeRequired = calculateUnifiedFee(formPrice, selectedCurrency, formType);
+
+      if (selectedCurrency === 'ETH') {
+        let totalValueEth = exactFeeRequired;
+        if (formType === 'smart_bounty') totalValueEth += parseFloat(formPrice);
+        
+        const valueInWei = parseEther(totalValueEth.toFixed(18));
+        
+        await writeContractAsync({ 
+          address: VAULT_CONTRACT_ADDRESS, 
+          abi: MARKETPLACE_ABI, 
+          functionName: 'listAsset', 
+          args: [newId, assetTypeEnum, parseEther(formPrice), ETH_ADDRESS], 
+          value: valueInWei 
+        });
+      } else {
+        const feeInWei = parseEther((exactFeeRequired / ethUsdRate).toFixed(18));
+        
+        let totalUsdcNeeded = 0;
+        if (formType === 'smart_bounty') totalUsdcNeeded += parseFloat(formPrice);
+        
+        if (totalUsdcNeeded > 0) {
+           await writeContractAsync({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_CONTRACT_ADDRESS, parseUnits(totalUsdcNeeded.toString(), 6)] });
+        }
+        
+        await writeContractAsync({ 
+          address: VAULT_CONTRACT_ADDRESS, 
+          abi: MARKETPLACE_ABI, 
+          functionName: 'listAsset', 
+          args: [newId, assetTypeEnum, parseUnits(formPrice, 6), USDC_ADDRESS],
+          value: feeInWei
+        });
+      }
+      alert("✅ Node Listed Successfully");
+      reloadContractCount();
+    } catch (err) {
+      console.error(err);
+      alert("Transaction Failed.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleBuyNow = () => {
-    if (!selectedItem || !verifyActiveNetworkChain()) return;
-    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: parseEther(selectedItem.buyNowPrice || selectedItem.price) });
-    setSelectedItem(null);
+  const handleBuyNow = async () => {
+    if (!selectedItem) return;
+    if (chainId !== base.id) return alert("Switch to Base Mainnet");
+    setIsProcessing(true);
+    try {
+      const isUsdc = selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+      const rawPrice = isUsdc ? parseUnits(selectedItem.price, 6) : parseEther(selectedItem.price);
+      
+      if (isUsdc) {
+        await writeContractAsync({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_CONTRACT_ADDRESS, rawPrice] });
+        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)] });
+      } else {
+        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: rawPrice });
+      }
+      alert("✅ Escrow Locked Successfully");
+      setSelectedItem(null);
+      reloadContractCount();
+    } catch (err) {
+      console.error(err);
+      alert("Transaction Failed.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handlePlaceBid = (e: React.FormEvent) => {
+  const handlePlaceBid = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedItem || !verifyActiveNetworkChain()) return;
-    if (parseFloat(bidAmount) <= parseFloat(selectedItem.price)) return alert("Bid position evaluation failure.");
-    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: parseEther(bidAmount) });
-    setSelectedItem(null);
-    setBidAmount('');
+    if (!selectedItem) return;
+    if (chainId !== base.id) return alert("Switch to Base Mainnet");
+    if (parseFloat(bidAmount) <= 0) return alert("Bid position evaluation failure.");
+    setIsProcessing(true);
+    try {
+      const isUsdc = selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+      const rawPrice = isUsdc ? parseUnits(bidAmount, 6) : parseEther(bidAmount);
+      
+      if (isUsdc) {
+        await writeContractAsync({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_CONTRACT_ADDRESS, rawPrice] });
+        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)] });
+      } else {
+        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: rawPrice });
+      }
+      alert("✅ Escrow Locked Successfully");
+      setSelectedItem(null);
+      setBidAmount('');
+      reloadContractCount();
+    } catch (err) {
+      console.error(err);
+      alert("Transaction Failed.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const handleBuyerReleaseGigEscrow = (id: number) => {
-    if (!verifyActiveNetworkChain()) return;
-    writeContract({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'releaseEscrowFunds', args: [BigInt(id)] });
+  const handleBuyerReleaseGigEscrow = async (id: number) => {
+    if (chainId !== base.id) return alert("Switch to Base Mainnet");
+    try {
+      await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'releaseEscrowFunds', args: [BigInt(id)] });
+      alert("✅ Funds Disbursed");
+      reloadContractCount();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleAdminWithdrawLiquidity = async () => {
+    if (!mounted || !isConnected) return;
+    if (address?.toLowerCase() !== DEVELOPER_ADMIN_ADDRESS.toLowerCase()) {
+      alert("Security Error: Administrative operation revoked.");
+      return;
+    }
+    if (chainId !== base.id) return alert("Switch to Base Mainnet");
+    try {
+      await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'withdrawFees' });
+    } catch(e) { console.error(e); }
   };
 
   const sendChatMessage = async (gigId: number) => {
     if (!chatMessage.trim() || !address) return alert("Connect wallet to broadcast telemetry.");
-    
     const senderLabel = address.slice(0,6) + "..." + address.slice(-4);
-    
-    const { error } = await supabase
-      .from('marketplace_chats')
-      .insert([
-        { gig_id: gigId, sender: senderLabel, message_text: chatMessage }
-      ]);
-
-    if (error) {
-      console.error("Telemetry distribution breakdown:", error);
-    } else {
-      setChatMessage('');
-    }
+    const { error } = await supabase.from('marketplace_chats').insert([{ gig_id: gigId, sender: senderLabel, message_text: chatMessage }]);
+    if (error) console.error("Telemetry distribution breakdown:", error);
+    else setChatMessage('');
   };
 
   if (id) {
@@ -369,7 +452,7 @@ function MarketplaceContent() {
           
           <div className="space-y-2 text-sm text-slate-300">
             <div><span className="text-green-500 font-bold">Contract Deployment:</span> {VAULT_CONTRACT_ADDRESS}</div>
-            <div><span className="text-green-500 font-bold">Vault Deposit:</span> {activeIndexItem?.price || "0.0"} ETH</div>
+            <div><span className="text-green-500 font-bold">Vault Deposit:</span> {activeIndexItem?.price || "0.0"} {activeIndexItem?.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</div>
             <div><span className="text-green-500 font-bold">Seller Wallet:</span> {activeIndexItem?.seller || "SYNCING REGISTERED NODE..."}</div>
             <div><span className="text-green-500 font-bold">Escrow Status:</span> <span className="text-white bg-green-900 px-1 font-bold">{activeIndexItem?.status || "ACTIVE_ESCROW"}</span></div>
             <div><span className="text-green-500 font-bold">Tracking Code:</span> {activeIndexItem?.cleanFileUrl ? "CIPHER_MANIFEST_ATTACHED" : "AWAITING_SHIPMENT"}</div>
@@ -392,7 +475,6 @@ function MarketplaceContent() {
 
   return (
     <div className="min-h-screen p-0 m-0 w-full bg-[#0a0f1d] text-slate-100">
-      {/* TOS ACCESS PORTAL */}
       {mounted && !tosAccepted && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
           <div className="bg-[#10172a] border border-cyan-500/30 rounded-xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
@@ -407,7 +489,6 @@ function MarketplaceContent() {
         </div>
       )}
 
-      {/* RUNTIME ALIGNMENT BANNER */}
       {mounted && isConnected && chainId !== base.id && (
         <div className="bg-gradient-to-r from-rose-600 to-amber-600 px-4 py-2 text-center font-mono text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-3 shadow-inner text-white sticky top-0 z-50">
           <span>⚠️ SYSTEM TERMINAL MISALIGNED: WORKSPACE DETECTED ALTERNATE LAYER SEQUENCE</span>
@@ -417,15 +498,6 @@ function MarketplaceContent() {
         </div>
       )}
 
-      {/* TRANSACTION HUD */}
-      {mounted && txHash && !isTxConfirmed && (
-        <div className="fixed bottom-4 right-4 bg-[#11182c] border-2 border-amber-400 p-4 rounded shadow-2xl z-50 animate-pulse flex items-center gap-3 max-w-xs">
-          <div className="w-3 h-3 bg-amber-400 rounded-full animate-ping" />
-          <p className="text-[10px] font-mono font-black text-white uppercase tracking-widest">// BROADCAST PENDING: WAITING ON SEQUENCER NODE //</p>
-        </div>
-      )}
-
-      {/* NAVBAR */}
       <nav className="p-4 md:p-5 border-b border-cyan-500/20 sticky top-0 bg-[#0e1424]/90 backdrop-blur-xl z-40 shadow-lg flex flex-col sm:flex-row gap-3 sm:gap-0 justify-between items-center">
         <div className="flex items-center gap-2">
           <h1 className="text-xl md:text-2xl font-black tracking-tighter text-white bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(34,211,153,0.4)]">
@@ -440,11 +512,9 @@ function MarketplaceContent() {
           {(['browse', 'list', 'escrow_stream', 'vault_dashboard'] as const).map(tab => (
             <button 
               key={tab} onClick={() => setActiveTab(tab)} 
-              className="transition-all whitespace-nowrap relative py-1"
+              className={`transition-all whitespace-nowrap relative py-1 ${activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}`}
             >
-              <span className={activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}>
-                {tab === 'escrow_stream' ? 'Bounties Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
-              </span>
+              {tab === 'escrow_stream' ? 'Bounties Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
             </button>
           ))}
           <div className="h-4 w-[1px] bg-slate-800" />
@@ -465,13 +535,10 @@ function MarketplaceContent() {
         </div>
       </nav>
 
-      {/* TWO COLUMN MASTER GRID VIEW WRAPPER */}
       <div className="max-w-7xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-4 gap-6 relative z-10">
         
-        {/* LEFT COMPONENT COLUMN (Spans 3 Columns) */}
         <div className="lg:col-span-3 space-y-6">
 
-          {/* BROWSE INDEX SUB-VIEW */}
           {activeTab === 'browse' && (
             <div className="space-y-6">
               <div className="border-l-4 border-cyan-400 pl-3 md:pl-4">
@@ -489,7 +556,7 @@ function MarketplaceContent() {
 
               <div className="flex gap-2 overflow-x-auto no-scrollbar">
                 {(['all', 'physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map((tab) => (
-                  <button key={tab} onClick={() => setBrowseSubTab(tab)} className={browseSubTab === tab ? 'px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 bg-[#11182c] text-slate-400 border-slate-800'}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
+                  <button key={tab} onClick={() => setBrowseSubTab(tab)} className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
                 ))}
               </div>
 
@@ -507,15 +574,15 @@ function MarketplaceContent() {
                         <div>
                           <div className="flex justify-between items-center text-[9px] font-black tracking-wider uppercase mb-1.5 text-slate-500">
                             <span className="truncate pr-1">{item.category}</span>
-                            <span className="text-amber-400">★ {item.rating}</span>
+                            <span className="text-amber-400">{item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span>
                           </div>
                           <div className="font-black text-sm text-slate-200 truncate uppercase">{item.title}</div>
                         </div>
                         <div className="mt-4 pt-3 border-t border-slate-800/60 flex justify-between items-end">
                           <div>
                             <p className="text-[9px] text-slate-500 uppercase font-black">Escrow Value</p>
-                            <p className="text-emerald-400 text-base font-black">{item.price} <span className="text-xs font-normal text-slate-500">ETH</span></p>
-                            <p className="text-[9px] text-slate-400 font-mono">${convertEthToUsd(item.price)} USD</p>
+                            <p className="text-emerald-400 text-base font-black">{item.price} <span className="text-xs font-normal text-slate-500">{item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span></p>
+                            <p className="text-[9px] text-slate-400 font-mono">${convertToUsd(item.price, item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase())} USD</p>
                           </div>
                           <span className="text-[9px] font-bold bg-[#090d16] text-cyan-400 px-2 py-1 rounded border border-cyan-500/20 uppercase">{item.status}</span>
                         </div>
@@ -527,28 +594,15 @@ function MarketplaceContent() {
             </div>
           )}
 
-          {/* LIST ASSET SUB-VIEW */}
           {activeTab === 'list' && (
-            <div className="max-w-xl mx-auto w-full space-y-8">
-              
-              {/* 🛡️ INTERACTIVE AI ASSISTANT OVERRIDE */}
-              <div className="border border-cyan-500/20 bg-[#11182c]/60 rounded-xl p-1 shadow-xl">
-                <IntegratedAiAppraiser onDeployListing={processAiListingDeployment} ethUsdRate={ethUsdRate} />
-              </div>
-
-              <div className="flex items-center justify-center gap-4 text-xs font-mono text-slate-600 uppercase">
-                <div className="h-[1px] bg-slate-800 flex-1" />
-                <span>Or Deploy Contract Manually</span>
-                <div className="h-[1px] bg-slate-800 flex-1" />
-              </div>
-
-              <div className="mb-6 border-l-4 border-slate-700 pl-3">
-                <h2 className="text-lg font-black text-slate-400 tracking-tighter uppercase">Legacy Input Registry</h2>
+            <div className="max-w-xl mx-auto w-full">
+              <div className="mb-6 border-l-4 border-cyan-400 pl-3">
+                <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">List Asset Node</h1>
               </div>
               <form onSubmit={handleCreateListing} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
                 <div className="grid grid-cols-3 gap-2">
                   {(['physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map(type => (
-                    <button key={type} type="button" onClick={() => setFormType(type)} className={formType === type ? 'py-2.5 rounded font-black uppercase text-[9px] border bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'py-2.5 rounded font-black uppercase text-[9px] border bg-[#090d16] border-slate-800 text-slate-500'}>{type.replace('_', ' ')}</button>
+                    <button key={type} type="button" onClick={() => setFormType(type)} className={`py-2.5 rounded font-black uppercase text-[9px] border ${formType === type ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>{type.replace('_', ' ')}</button>
                   ))}
                 </div>
 
@@ -567,16 +621,24 @@ function MarketplaceContent() {
                   </div>
                 </div>
 
+                <div>
+                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Settlement Currency</label>
+                  <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value as 'ETH' | 'USDC')} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
+                    <option value="ETH">ETH (Base Native)</option>
+                    <option value="USDC">USDC (Base Token)</option>
+                  </select>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Base Registry Cost (ETH)</label>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Base Registry Cost ({selectedCurrency})</label>
                     <div className="relative">
                       <input type="number" step="0.0001" required placeholder="0.00" value={formPrice} onChange={e => setFormPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono font-bold text-emerald-400" />
-                      <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ {convertEthToUsd(formPrice)}</div>
+                      <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ ${convertToUsd(formPrice, selectedCurrency === 'USDC')}</div>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout Value (ETH)</label>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout Value ({selectedCurrency})</label>
                     <input type="number" step="0.0001" placeholder="0.00" value={formBuyNowPrice} onChange={e => setFormBuyNowPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono text-slate-400" />
                   </div>
                 </div>
@@ -584,8 +646,9 @@ function MarketplaceContent() {
                 {formPrice && parseFloat(formPrice) > 0 && (
                   <div className="p-3 bg-[#090d16] border border-cyan-500/10 rounded font-mono text-[9px] space-y-1 text-slate-400">
                     <p className="text-cyan-400 font-black">// CONTRACT DISBURSEMENT SPLIT BREAKDOWN (4% PLATFORM CUT)</p>
-                    <p>Seller Net Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice).sellerCut} ETH</span> [${calculateMarketplaceTake(formPrice).sellerUsd} USD]</p>
-                    <p>Platform Protocol Fee: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice).platformCut} ETH</span> [${calculateMarketplaceTake(formPrice).platformUsd} USD]</p>
+                    <p>Seller Net Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice, selectedCurrency === 'USDC').sellerCut} {selectedCurrency}</span> [${calculateMarketplaceTake(formPrice, selectedCurrency === 'USDC').sellerUsd} USD]</p>
+                    <p>Platform Protocol Fee: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice, selectedCurrency === 'USDC').platformCut} {selectedCurrency}</span> [${calculateMarketplaceTake(formPrice, selectedCurrency === 'USDC').platformUsd} USD]</p>
+                    <p className="text-amber-400 mt-2">// DYNAMIC PARITY DEPLOYMENT COST: {calculateUnifiedFee(formPrice, selectedCurrency, formType).toFixed(3)} {selectedCurrency === 'USDC' ? 'USDC Equivalent' : 'ETH'}</p>
                   </div>
                 )}
 
@@ -593,14 +656,13 @@ function MarketplaceContent() {
                   <textarea rows={2} placeholder="SPECIFY TECHNICAL CONDITIONS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
                 </div>
 
-                <button type="submit" disabled={isTxPending || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
-                  {chainId !== base.id ? '// WIREFLOW MISALIGNED - SWITCH TO BASE //' : isTxPending ? '// WAITING ON SEQUENCER...' : 'Broadcast Registry Transaction'}
+                <button type="submit" disabled={isProcessing || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
+                  {chainId !== base.id ? '// WIREFLOW MISALIGNED - SWITCH TO BASE //' : isProcessing ? '// WAITING ON SEQUENCER...' : 'Broadcast Registry Transaction'}
                 </button>
               </form>
             </div>
           )}
 
-          {/* BOUNTIES ESCROW SUB-VIEW */}
           {activeTab === 'escrow_stream' && (
             <div className="space-y-4">
               <div className="border-l-4 border-cyan-400 pl-3">
@@ -613,15 +675,17 @@ function MarketplaceContent() {
                   {listings.filter(i => i.type === 'smart_bounty').length === 0 ? (
                     <div className="border border-dashed border-slate-800 rounded-lg p-8 text-center text-slate-600 font-mono text-xs">// NO ACTIVE SERVICE PIPELINES INITIALIZED ON NETWORK //</div>
                   ) : (
-                    listings.filter(i => i.type === 'smart_bounty').map(gig => (
-                      <div key={gig.id} className={activeChatGigId === gig.id ? 'p-4 md:p-5 rounded-lg border transition-all duration-300 bg-[#141e36] border-cyan-400' : 'p-4 md:p-5 rounded-lg border transition-all duration-300 bg-[#10172a] border-slate-800'}>
+                    listings.filter(i => i.type === 'smart_bounty').map(gig => {
+                      const isUsdc = gig.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+                      return (
+                      <div key={gig.id} className={`p-4 md:p-5 rounded-lg border transition-all duration-300 ${activeChatGigId === gig.id ? 'bg-[#141e36] border-cyan-400' : 'bg-[#10172a] border-slate-800'}`}>
                         <div className="flex flex-col sm:flex-row justify-between items-start">
                           <div>
-                            <span className={gig.escrowReleased ? 'text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-amber-950 text-amber-400 border-amber-500/20'}>
+                            <span className={`text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border ${gig.escrowReleased ? 'bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'bg-amber-950 text-amber-400 border-amber-500/20'}`}>
                               {gig.escrowReleased ? 'FUNDS DISBURSED' : 'VAULT ESCROW ACTIVE'}
                             </span>
                             <h3 className="text-base font-black text-white mt-2 uppercase">{gig.title}</h3>
-                            <p className="text-[11px] text-slate-400 font-mono mt-1">Value allocation: <span className="text-emerald-400 font-bold">{gig.price} ETH</span> [${convertEthToUsd(gig.price)} USD]</p>
+                            <p className="text-[11px] text-slate-400 font-mono mt-1">Value allocation: <span className="text-emerald-400 font-bold">{gig.price} {isUsdc ? 'USDC' : 'ETH'}</span> [${convertToUsd(gig.price, isUsdc)} USD]</p>
                           </div>
                           <button onClick={() => setActiveChatGigId(gig.id)} className="text-[10px] font-black text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-3 py-2 rounded uppercase mt-2 sm:mt-0">CONNECT COMM CHANNEL</button>
                         </div>
@@ -640,23 +704,8 @@ function MarketplaceContent() {
                             </div>
                           </div>
                         )}
-
-                        {gig.watermarkedFilePreview && (
-                          <div className="mt-4 p-3 bg-[#090d16] border border-slate-800 rounded">
-                            <div className="p-3 bg-[#10172a] rounded border border-dashed border-slate-800 text-center font-mono text-[10px]">
-                              {!gig.escrowReleased ? (
-                                <span className="text-amber-400 animate-pulse">🔒 METADATA PAYLOAD DETECTED IN STORAGE RESERVES. RELEASING ESCROW UNLOCKS INTEGRATED IPFS SIGNATURE LINK.</span>
-                              ) : (
-                                <div className="flex justify-between items-center text-xs">
-                                  <span className="text-emerald-400 font-bold">🔓 DISBURSEMENT SETTLED:</span>
-                                  <a href={gig.cleanFileUrl} target="_blank" rel="noreferrer" className="text-cyan-400 font-black underline">DOWNLOAD_CLEAR_SOURCE.zip</a>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
                       </div>
-                    ))
+                    )})
                   )}
                 </div>
 
@@ -668,7 +717,7 @@ function MarketplaceContent() {
                         {chatLogs.map((msg, idx) => {
                           const isUser = address && msg.sender.toLowerCase() === (address.slice(0,6) + "..." + address.slice(-4)).toLowerCase();
                           return (
-                            <div key={idx} className={isUser ? 'p-2.5 rounded text-[11px] font-mono bg-[#141e36] text-cyan-300 border border-cyan-500/20 ml-auto max-w-[90%]' : 'p-2.5 rounded text-[11px] font-mono bg-[#090d16] text-slate-300 border border-slate-800 max-w-[90%]'}>
+                            <div key={idx} className={`p-2.5 rounded text-[11px] font-mono ${isUser ? 'bg-[#141e36] text-cyan-300 border border-cyan-500/20 ml-auto max-w-[90%]' : 'bg-[#090d16] text-slate-300 border border-slate-800 max-w-[90%]'}`}>
                               <p className="text-[7px] text-slate-500 uppercase tracking-widest font-black mb-0.5">{msg.sender}</p>
                               <p className="break-words leading-tight">{msg.text}</p>
                             </div>
@@ -690,7 +739,6 @@ function MarketplaceContent() {
             </div>
           )}
 
-          {/* VAULT DASHBOARD SUB-VIEW */}
           {activeTab === 'vault_dashboard' && (
             <div className="space-y-4">
               {mounted && isConnected && address?.toLowerCase() === DEVELOPER_ADMIN_ADDRESS.toLowerCase() && (
@@ -705,11 +753,13 @@ function MarketplaceContent() {
 
               <div className="bg-[#10172a] border border-slate-800 p-4 rounded-lg text-xs space-y-4">
                 <h3 className="text-[10px] font-black uppercase tracking-widest font-mono text-cyan-400">// ESCROW ORDERS MANAGEMENT (4% PROTOCOL FEE ENFORCED)</h3>
-                {listings.filter(i => i.type === 'smart_bounty').map(gig => (
+                {listings.filter(i => i.type === 'smart_bounty').map(gig => {
+                  const isUsdc = gig.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+                  return (
                   <div key={gig.id} className="bg-[#090d16] p-4 rounded border border-slate-800 space-y-3">
                     <div className="flex justify-between items-center">
                       <h4 className="font-black text-white uppercase">{gig.title}</h4>
-                      <span className="text-emerald-400 font-bold font-mono">{gig.price} ETH</span>
+                      <span className="text-emerald-400 font-bold font-mono">{gig.price} {isUsdc ? 'USDC' : 'ETH'}</span>
                     </div>
                     {!gig.escrowReleased ? (
                       <button onClick={() => handleBuyerReleaseGigEscrow(gig.id)} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 text-black font-black py-2 rounded text-[10px] uppercase tracking-widest disabled:opacity-40">
@@ -719,21 +769,25 @@ function MarketplaceContent() {
                       <p className="text-[10px] text-emerald-500 font-mono font-black">// TRANSACTION MATRIX CLOSED. SETTLEMENT COMPLETE.</p>
                     )}
                   </div>
-                ))}
+                )})}
               </div>
             </div>
           )}
         </div>
 
-        {/* RIGHT COLUMN SIDEBAR PANEL */}
         <div className="lg:col-span-1 space-y-4">
           <div className="border border-cyan-950 bg-[#10172a]/90 rounded-xl p-4 flex flex-col gap-3 font-mono shadow-[0_0_25px_rgba(0,240,255,0.03)] sticky top-24">
+            
             <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-1">
               <div className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#00f0ff]" />
-                <h3 className="text-xs font-bold tracking-wider text-cyan-400 uppercase">LIQUIDITY RAMPS</h3>
+                <h3 className="text-xs font-bold tracking-wider text-cyan-400 uppercase">
+                  LIQUIDITY RAMPS
+                </h3>
               </div>
-              <span className="text-[9px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">v2.1</span>
+              <span className="text-[9px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+                v2.1
+              </span>
             </div>
 
             <p className="text-[11px] font-sans text-slate-400 leading-relaxed">
@@ -745,7 +799,10 @@ function MarketplaceContent() {
                 <span>From: ETH, ARB, OP</span>
                 <span className="text-emerald-400 font-bold">Fee: 0.2%</span>
               </div>
-              <a href="/portal" className="flex items-center justify-center gap-2 border border-cyan-950 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/50 hover:border-cyan-500 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center">
+              <a 
+                href="/portal"
+                className="flex items-center justify-center gap-2 border border-cyan-950 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/50 hover:border-cyan-500 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center"
+              >
                 ⚡ BRIDGE FROM OTHER CHAINS
               </a>
             </div>
@@ -755,7 +812,12 @@ function MarketplaceContent() {
                 <span>From: Card or Bank Account</span>
                 <span className="text-cyan-400">Bonus Active</span>
               </div>
-              <a href="https://coinbase.com/join/3MUGJEH?src=android-link" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 border border-slate-800 bg-slate-900/40 text-slate-300 hover:bg-slate-900/80 hover:border-slate-600 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center">
+              <a 
+                href="https://coinbase.com/join/3MUGJEH?src=android-link" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 border border-slate-800 bg-slate-900/40 text-slate-300 hover:bg-slate-900/80 hover:border-slate-600 transition-all py-2 rounded-lg text-xs font-bold tracking-tight duration-200 text-center"
+              >
                 💳 BUY CRYPTO WITH CASH ↗
               </a>
             </div>
@@ -767,9 +829,9 @@ function MarketplaceContent() {
             </div>
           </div>
         </div>
+
       </div>
 
-      {/* INSPECTION VIEW MODAL */}
       {selectedItem && (
         <div className="fixed inset-0 bg-[#070a12]/95 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setSelectedItem(null)}>
           <div className="bg-[#10172a] border border-slate-800 rounded-lg p-5 max-w-2xl w-full space-y-4" onClick={e => e.stopPropagation()}>
@@ -782,27 +844,27 @@ function MarketplaceContent() {
                 <h2 className="text-lg font-black text-white mt-1.5 uppercase">{selectedItem.title}</h2>
               </div>
               <div className="text-right">
-                <p className="text-xl text-emerald-400 font-black">{selectedItem.price} <span className="text-xs font-normal text-zinc-500">ETH</span></p>
-                <p className="text-[10px] text-slate-400 font-bold">≈ {convertEthToUsd(selectedItem.price)} USD</p>
+                <p className="text-xl text-emerald-400 font-black">{selectedItem.price} <span className="text-xs font-normal text-zinc-500">{selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span></p>
+                <p className="text-[10px] text-slate-400 font-bold">≈ ${convertToUsd(selectedItem.price, selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase())} USD</p>
               </div>
             </div>
             <p className="text-slate-300 text-[11px] bg-[#090d16] p-3 rounded border border-slate-800 font-mono uppercase">{selectedItem.description}</p>
             <div className="pt-3 border-t border-slate-800 flex flex-col gap-2">
               <form onSubmit={handlePlaceBid} className="flex gap-1.5">
                 <input type="number" step="0.001" required placeholder={`// LOCK BID ESCROW CORNER VALUE > ${selectedItem.price}`} value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="flex-1 bg-[#090d16] border border-slate-800 p-2.5 rounded text-[11px] font-bold text-white font-mono outline-none" />
-                <button type="submit" disabled={chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">LOCK_ESCROW</button>
+                <button type="submit" disabled={isProcessing || chainId !== base.id} className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-black px-4 rounded text-[10px] uppercase disabled:opacity-40">
+                  {isProcessing ? 'PROCESSING...' : 'LOCK_ESCROW'}
+                </button>
               </form>
               {selectedItem.buyNowPrice && (
-                <button onClick={handleBuyNow} disabled={chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">SETTLE_IMMEDIATE_BUYOUT ({selectedItem.buyNowPrice} ETH)</button>
+                <button onClick={handleBuyNow} disabled={isProcessing || chainId !== base.id} className="w-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-black font-black py-2.5 rounded text-[10px] uppercase disabled:opacity-40">
+                  {isProcessing ? 'PROCESSING...' : `SETTLE_IMMEDIATE_BUYOUT (${selectedItem.buyNowPrice} ETH)`}
+                </button>
               )}
             </div>
           </div>
         </div>
       )}
-
-      {/* 🔥 THE AUTOMATED SUPPORT WIDGET: FLOATS GLOBALLY */}
-      <SupportBot walletAddress={address} />
-
     </div>
   );
 }
