@@ -1,35 +1,33 @@
 {
   "expo": {
-    "name": "BaseVault",
+    "name": "BaseVaultMobile",
     "slug": "basevault",
     "version": "1.0.0",
-    "scheme": "basevault",
+    "orientation": "portrait",
+    "icon": "./assets/1779467610858.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "basevaultmobile",
+    "splash": {
+      "image": "./assets/1779467610858.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.basevault.mobile"
+    },
     "android": {
-      "package": "com.basevault.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/1779467610858.png",
+        "backgroundColor": "#000000"
+      },
+      "package": "com.basevault.mobile",
       "intentFilters": [
         {
           "action": "VIEW",
-          "autoVerify": true,
           "data": [
             {
-              "scheme": "https",
-              "host": "basevaultmarket.com",
-              "pathPrefix": "/"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
-        },
-        {
-          "action": "VIEW",
-          "autoVerify": true,
-          "data": [
-            {
-              "scheme": "https",
-              "host": "basevaultmarket.com",
-              "pathPrefix": "/"
+              "scheme": "basevaultmobile"
             }
           ],
           "category": [
@@ -38,6 +36,9 @@
           ]
         }
       ]
+    },
+    "web": {
+      "favicon": "./assets/1779467610858.png"
     },
     "extra": {
       "eas": {
@@ -49,7 +50,6 @@
     },
     "updates": {
       "url": "https://u.expo.dev/57886bf3-0f41-4f26-a780-4254bdc8a449"
-    },
-    "ios": {}
+    }
   }
 }

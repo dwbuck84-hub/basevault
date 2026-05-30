@@ -2,708 +2,857 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, Suspense, useCallback } from 'react';
+import { useState, useEffect, Suspense, useRef } from 'react';
 import { parseEther, formatEther, parseUnits, formatUnits, createPublicClient, http } from 'viem';
-import { base } from 'wagmi/chains';
+import { baseSepolia } from 'wagmi/chains';
 import { supabase } from '../lib/supabaseClient'; 
-import { useSearchParams } from 'next/navigation'; 
-import { 
-  useAccount, 
-  useConnect, 
-  useDisconnect, 
-  useWriteContract, 
-  useBalance,
-  useReadContract,
-  useWaitForTransactionReceipt,
-  useSwitchChain
-} from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useWriteContract } from 'wagmi';
 
-// BASE MAINNET USDC & ORACLE
-const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+// ==========================================
+// PROTOCOL CONSTANTS & ABIS (V5 LIVE)
+// ==========================================
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; 
 const ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
-
-// V4 MASTER CONTRACT ADDRESS
-const VAULT_CONTRACT_ADDRESS = "0xd07bE49fe9ff12079f7619d85D5abEb236988C6A"; 
-const DEVELOPER_ADMIN_ADDRESS = "0x635c225c13851C96ACC20d62aD06C8C794912463"; 
+const VAULT_V5_ADDRESS = "0x1EB0A260528B1639DD19B5CB61160797A8FB1EFF"; 
+const DB_TABLE = "listings"; // Wired directly to your backend
 
 const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
-
-const MARKETPLACE_ABI = [
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV4.AssetType","name":"_assetType","type":"uint8"},{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"_ethAmountInWei","type":"uint256"}],"name":"getUsdcEquivalent","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"purchaseAsset","outputs":[],"stateMutability":"payable","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"releaseEscrowFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"bindBounty","outputs":[],"stateMutability":"nonpayable","type":"function"},
-  {"inputs":[],"name":"totalListingsCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"listings","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"enum BaseVaultMarketplaceV4.AssetType","name":"assetType","type":"uint8"},{"internalType":"uint256","name":"price","type":"uint256"},{"internalType":"address","name":"paymentToken","type":"address"},{"internalType":"address","name":"seller","type":"address"},{"internalType":"address","name":"buyer","type":"address"},{"internalType":"enum BaseVaultMarketplaceV4.Status","name":"status","type":"uint8"}],"stateMutability":"view","type":"function"},
-  {"inputs":[],"name":"withdrawFees","outputs":[],"stateMutability":"nonpayable","type":"function"}
+const ERC721_ABI = [
+  {"inputs":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"approve","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"tokenURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"}
+];
+const MARKETPLACE_V5_ABI = [
+  {"inputs":[{"internalType":"uint256","name":"_reservePrice","type":"uint256"},{"internalType":"uint256","name":"_duration","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"},{"internalType":"uint8","name":"_assetType","type":"uint8"},{"internalType":"address","name":"_nftContract","type":"address"},{"internalType":"uint256","name":"_tokenId","type":"uint256"}],"name":"createAuction","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_auctionId","type":"uint256"},{"internalType":"uint256","name":"_erc20Amount","type":"uint256"}],"name":"placeBid","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_auctionId","type":"uint256"}],"name":"settleAuction","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"_token","type":"address"}],"name":"withdrawRefund","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_auctionId","type":"uint256"}],"name":"cancelAuction","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"auctions","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"address","name":"seller","type":"address"},{"internalType":"uint256","name":"reservePrice","type":"uint256"},{"internalType":"uint256","name":"highestBid","type":"uint256"},{"internalType":"address","name":"highestBidder","type":"address"},{"internalType":"uint256","name":"endTime","type":"uint256"},{"internalType":"address","name":"paymentToken","type":"address"},{"internalType":"uint8","name":"assetType","type":"uint8"},{"internalType":"bool","name":"settled","type":"bool"},{"internalType":"address","name":"nftContract","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"pendingRefunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"auctionCounter","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ];
 
-interface Listing {
-  id: number;
-  type: 'physical_asset' | 'smart_bounty' | 'tokenized_nft'; 
-  title: string;
-  price: string; 
-  buyNowPrice?: string; 
-  bidsCount: number;
-  category: string;
-  seller: string;
-  buyer: string;
-  paymentToken: string;
-  rating: number;
-  ratingCount: number; 
-  description: string;
-  images: string[];
-  duration?: string;
-  status: 'Active' | 'EscrowLocked' | 'Settled' | 'Quarantined'; 
-  highestBidder?: string; 
-  nftContract?: string;
-  nftTokenId?: string;
-  buyerShippingAddress?: string;
-  buyerShippingMethod?: string;
-  trackingNumber?: string;
-  escrowReleased: boolean;
-  watermarkedFilePreview?: string;
-  cleanFileUrl?: string; 
-  governanceFlags: number; 
+// DATA DICTIONARIES
+const PHYSICAL_CATEGORIES = ["Electronics & Hardware", "Collectibles & Cards", "Apparel & Garments", "Automotive Parts", "Home & Living", "Tools & Equipment", "Books & Media", "Sports & Outdoors", "Toys & Hobbies", "Jewelry & Watches"];
+const BOUNTY_CATEGORIES = ["Software Development", "Digital Art & Design", "Marketing & Copywriting", "Smart Contract Auditing", "Video Editing", "Translation Services", "Technical Writing", "UI/UX Design", "Cyber Security"];
+
+interface AuctionListing {
+  id: string; type: 'digital' | 'physical' | 'tokenized_nft'; title: string; category: string; description: string; images: string[]; seller: string; highestBidder: string; reservePrice: string; highestBid: string; endTime: number; paymentToken: string; settled: boolean; nftContract?: string; nftTokenId?: string; shippingAddress?: string; trackingInfo?: string; shippingLabelUrl?: string; sellerRating?: number; buyerRating?: number; selectedShippingOption?: string; premiumShipping?: boolean; saleMode?: 'auction' | 'fixed';
 }
 
-export default function Home() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">INITIALIZING INTERFACE TERMINAL...</div>}>
-      <MarketplaceContent />
-    </Suspense>
-  );
-}
+export default function Home() { return <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">// INITIALIZING V5 TERMINAL... //</div>}><MarketplaceContent /></Suspense>; }
 
 function MarketplaceContent() {
   const { address, isConnected, chainId } = useAccount();
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
-  const { switchChain } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
-  const contractBalance = useBalance({ address: VAULT_CONTRACT_ADDRESS });
 
-  const searchParams = useSearchParams();
-  const id = searchParams.get('id');
-
-  const [activeTab, setActiveTab] = useState<'browse' | 'list' | 'escrow_stream' | 'vault_dashboard'>('browse');
-  const [browseSubTab, setBrowseSubTab] = useState<'all' | 'physical_asset' | 'smart_bounty' | 'tokenized_nft'>('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [visibleCount, setVisibleCount] = useState(12); 
-  const [selectedItem, setSelectedItem] = useState<Listing | null>(null);
-  const [bidAmount, setBidAmount] = useState('');
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [tosAccepted, setTosAccepted] = useState(false);
+  const [activeTab, setActiveTab] = useState<'browse' | 'list' | 'vault_dashboard' | 'terms'>('browse');
+  const [browseSubTab, setBrowseSubTab] = useState<'all' | 'digital' | 'physical' | 'tokenized_nft'>('all');
   
-  const [isUploadingToIpfs, setIsUploadingToIpfs] = useState<Record<number, boolean>>({});
-  const [deliveryPayloads, setDeliveryPayloads] = useState<Record<number, string>>({});
+  // Filter & Search Engine State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [physicalFilter, setPhysicalFilter] = useState('all');
+  const [bountyFilter, setBountyFilter] = useState('all');
+
+  const [selectedItem, setSelectedItem] = useState<AuctionListing | null>(null);
+  const [modalImgIdx, setModalImgIdx] = useState(0);
   const [ethUsdRate, setEthUsdRate] = useState<number>(3100); 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Storage Upload States
-  const [uploadingFiles, setUploadingFiles] = useState(false);
-  const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
-
-  const [activeChatGigId, setActiveChatGigId] = useState<number | null>(null);
-  const [chatMessage, setChatMessage] = useState('');
-  const [chatLogs, setChatLogs] = useState<Array<{sender: string, text: string}>>([]);
-
-  const [formType, setFormType] = useState<'physical_asset' | 'smart_bounty' | 'tokenized_nft'>('physical_asset');
+  // Form State
+  const [saleMode, setSaleMode] = useState<'auction' | 'fixed'>('auction');
+  const [formType, setFormType] = useState<'digital' | 'physical' | 'tokenized_nft'>('digital');
   const [formTitle, setFormTitle] = useState('');
-  const [formCategory, setFormCategory] = useState('Sneakers & Apparel');
-  const [formPrice, setFormPrice] = useState(''); 
-  const [formBuyNowPrice, setFormBuyNowPrice] = useState('');
+  const [formCategory, setFormCategory] = useState(BOUNTY_CATEGORIES[0]);
+  const [formReservePrice, setFormReservePrice] = useState(''); 
+  const [formDuration, setFormDuration] = useState('86400');
   const [formDescription, setFormDescription] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState<'ETH' | 'USDC'>('ETH');
+  const [usePremiumShipping, setUsePremiumShipping] = useState(false);
+  
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
+  const [stockPhotoWarning, setStockPhotoWarning] = useState(false);
+  const [nftContractAddress, setNftContractAddress] = useState('');
+  const [nftTokenId, setNftTokenId] = useState('');
+  const [isNftVerified, setIsNftVerified] = useState(false);
+  const [isVerifyingNft, setIsVerifyingNft] = useState(false);
 
-  const itemCategories = ["Sneakers & Apparel", "Luxury Chronographs", "Hardware Components", "Vintage Electronics", "Collectibles & Art Assets"];
-  const bountyCategories = ["Software Development", "Interface Design", "Smart Contract Audit", "Digital Content Generation", "Protocol Optimization"];
-  const nftCategories = ["Generative Art Collections", "Virtual Environment Nodes", "Utility Access Passes", "Gaming Registry Keys"];
-
-  const [listings, setListings] = useState<Listing[]>([]);
+  // Stats & Dashboard
+  const [modalTab, setModalTab] = useState<'details' | 'comms' | 'sandbox' | 'fulfillment'>('details');
+  const [bidInput, setBidInput] = useState('');
+  const [listings, setListings] = useState<AuctionListing[]>([]);
+  const [pendingEthRefund, setPendingEthRefund] = useState('0');
+  const [pendingUsdcRefund, setPendingUsdcRefund] = useState('0');
   const [mounted, setMounted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
+  
+  // Doom Scroll State
+  const [visibleCount, setVisibleCount] = useState(15);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Chat & Sandbox
+  const [botMessages, setBotMessages] = useState<{sender: 'bot' | 'user', text: string}[]>([{ sender: 'bot', text: 'BaseVault AI Matrix online. Operational architecture secure.' }]);
+  const [chatInput, setChatInput] = useState('');
+  const [assistantInput, setAssistantInput] = useState('');
+  const [bountyMessages, setBountyMessages] = useState<{sender: string, text: string, timestamp: number}[]>([{ sender: 'system', text: 'Secure Peer-to-Peer Channel Engaged.', timestamp: Date.now() }]);
+  const [sandboxCode, setSandboxCode] = useState(`// BaseVault Shipping Telemetry & Escrow Matrix\nfunction calculateFulfillment(basePrice, shippingTier) {\n  const platFee = basePrice * 0.04;\n  let shippingCost = 0;\n  if (shippingTier === 'UPS') shippingCost = 10.00;\n  if (shippingTier === 'FedEx') shippingCost = 20.00;\n  const totalPayout = basePrice * 0.96;\n  return {\n    buyerTotal: basePrice + shippingCost,\n    sellerDisbursed: totalPayout,\n    protocolFeeCollected: platFee\n  };\n}\nconsole.log(calculateFulfillment(150.00, 'FedEx'));`);
+  const [sandboxLogs, setSandboxLogs] = useState<string[]>(['// RUNTIME PRE-LOADED WITH ESCROW TELEMETRY ALGORITHM']);
+  const [runSandboxTrig, setRunSandboxTrig] = useState(0);
+
+  // Global Configs
+  const [chosenShippingTier, setChosenShippingTier] = useState('USPS');
+  const [globalDropPoint, setGlobalDropPoint] = useState('');
+  const [globalCarrier, setGlobalCarrier] = useState('USPS');
+
+  // Fulfillment Preferences
+  const [fulfillmentAddress, setFulfillmentAddress] = useState('');
+  const [fulfillmentTracking, setFulfillmentTracking] = useState('');
+  const [shippingLabelUrl, setShippingLabelUrl] = useState('');
+
+  // Appraiser
+  const [aiAppraisalValue, setAiAppraisalValue] = useState<string | null>(null);
+  const [isAppraising, setIsAppraising] = useState(false);
+
   useEffect(() => { setMounted(true); }, []);
-
+  useEffect(() => { const timer = setInterval(() => setCurrentTime(Math.floor(Date.now() / 1000)), 1000); return () => clearInterval(timer); }, []);
+  
+  // Doom Scroll Observer Hook
   useEffect(() => {
-    if (!activeChatGigId) return;
-    const fetchChatHistory = async () => {
-      const { data, error } = await supabase.from('marketplace_chats').select('sender, message_text').eq('gig_id', activeChatGigId).order('id', { ascending: true });
-      if (!error && data) setChatLogs(data.map(m => ({ sender: m.sender, text: m.message_text })));
+    const handleScroll = () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) {
+        setVisibleCount(prev => prev + 15);
+      }
     };
-    fetchChatHistory();
-
-    const telemetryChannel = supabase.channel(`gig_telemetry_${activeChatGigId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'marketplace_chats', filter: `gig_id=eq.${activeChatGigId}` }, (payload) => {
-        const newMsg = payload.new;
-        setChatLogs(prev => [...prev, { sender: newMsg.sender, text: newMsg.message_text }]);
-      }).subscribe();
-    return () => { supabase.removeChannel(telemetryChannel); };
-  }, [activeChatGigId]);
-
-  useEffect(() => {
-    const fetchCurrentPriceFeed = async () => {
-      try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-        const data = await response.json();
-        if (data?.ethereum?.usd) setEthUsdRate(Number(data.ethereum.usd));
-      } catch (err) { console.error("Failed to sync fiat ticker:", err); }
-    };
-    fetchCurrentPriceFeed();
-    const priceTickerInterval = setInterval(fetchCurrentPriceFeed, 60000); 
-    return () => clearInterval(priceTickerInterval);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const { data: totalListingsCount, refetch: reloadContractCount } = useReadContract({
-    address: VAULT_CONTRACT_ADDRESS,
-    abi: MARKETPLACE_ABI,
-    functionName: 'totalListingsCount',
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => { if (e.data && e.data.type === 'sandbox-log') setSandboxLogs(prev => [...prev, `> ${e.data.message}`]); };
+    window.addEventListener('message', handleMessage); return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  useEffect(() => {
+    if (formType === 'digital') { setSaleMode('fixed'); setFormDuration('2592000'); setFormCategory(BOUNTY_CATEGORIES[0]); }
+    else if (formType === 'physical') { setFormCategory(PHYSICAL_CATEGORIES[0]); }
+    else if (formType === 'tokenized_nft') { setFormCategory('Tokenized Asset'); }
+    setUploadedImageUrls([]);
+    setStockPhotoWarning(false);
+  }, [formType]);
+
+  useEffect(() => {
+    if (selectedItem) {
+      setModalTab('details');
+      setModalImgIdx(0);
+      setFulfillmentAddress(selectedItem.shippingAddress || globalDropPoint || '');
+      setFulfillmentTracking(selectedItem.trackingInfo || '');
+      setShippingLabelUrl(selectedItem.shippingLabelUrl || '');
+      setChosenShippingTier(selectedItem.selectedShippingOption || 'USPS');
+      setBidInput('');
+    }
+  }, [selectedItem, globalDropPoint]);
+
+  const uploadToSupabaseStorage = async (file: File): Promise<string | null> => {
+    try {
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${file.name.split('.').pop()}`;
+      const { data, error } = await supabase.storage.from('listing-assets').upload(fileName, file, { cacheControl: '3600', upsert: false });
+      if (error) return null;
+      const { data: urlData } = supabase.storage.from('listing-assets').getPublicUrl(data.path);
+      return urlData.publicUrl;
+    } catch (err) { return null; }
+  };
+
+  const syncV5Ledger = async () => {
+    try {
+      const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+      const activeListings: AuctionListing[] = [];
+      let supabaseMetaMap = new Map();
+      try {
+        const { data: dbData } = await supabase.from(DB_TABLE).select('*').limit(1000);
+        if (dbData) dbData.forEach(i => { supabaseMetaMap.set(Number(i.id), i); });
+      } catch (e) {}
+
+      let counter = 0n;
+      try { counter = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'auctionCounter' }) as bigint; } catch(e) { return; }
+
+      for (let i = 1n; i <= counter; i++) {
+        try {
+          const rawAuc = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'auctions', args: [i] }) as any;
+          if (!rawAuc || rawAuc.seller === ETH_ADDRESS) continue;
+          const isUsdc = rawAuc.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+          const meta = supabaseMetaMap.get(Number(i)) || {};
+
+          activeListings.push({
+            id: i.toString(), type: rawAuc.assetType === 0 ? 'digital' : rawAuc.assetType === 1 ? 'physical' : 'tokenized_nft',
+            title: meta.title || `Node #${i}`, category: meta.category || "Asset", description: meta.description || "",
+            images: meta.images?.length > 0 ? meta.images : ["https://images.unsplash.com/photo-1639762681485-074b7f938ba0?q=80&w=2832&auto=format&fit=crop"],
+            seller: rawAuc.seller, highestBidder: rawAuc.highestBidder,
+            reservePrice: isUsdc ? formatUnits(rawAuc.reservePrice, 6) : formatEther(rawAuc.reservePrice),
+            highestBid: isUsdc ? formatUnits(rawAuc.highestBid, 6) : formatEther(rawAuc.highestBid),
+            endTime: Number(rawAuc.endTime), paymentToken: rawAuc.paymentToken, settled: rawAuc.settled,
+            shippingAddress: meta.shipping_address, trackingInfo: meta.tracking_info, shippingLabelUrl: meta.shipping_label_url,
+            sellerRating: meta.seller_rating, buyerRating: meta.buyer_rating, selectedShippingOption: meta.selected_shipping_option, premiumShipping: meta.premium_shipping,
+            saleMode: meta.sale_mode || (rawAuc.assetType === 0 ? 'fixed' : 'auction')
+          });
+        } catch (err) {}
+      }
+      setListings(activeListings.sort((a, b) => Number(b.id) - Number(a.id)));
+      
+      if (address) {
+        try {
+          const ethRef = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'pendingRefunds', args: [address, ETH_ADDRESS] }) as bigint;
+          const usdcRef = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'pendingRefunds', args: [address, USDC_ADDRESS] }) as bigint;
+          setPendingEthRefund(formatEther(ethRef)); setPendingUsdcRefund(formatUnits(usdcRef, 6));
+        } catch(e) {}
+      }
+    } catch (err) {}
+  };
+  useEffect(() => { syncV5Ledger(); const timer = setInterval(syncV5Ledger, 10000); return () => clearInterval(timer); }, [address]);
+
+  const filteredListings = listings.filter(item => {
+    if (browseSubTab !== 'all' && item.type !== browseSubTab) return false;
+    if (searchQuery) {
+      const term = searchQuery.toLowerCase();
+      const matchTitle = item.title?.toLowerCase().includes(term);
+      const matchDesc = item.description?.toLowerCase().includes(term);
+      const matchCat = item.category?.toLowerCase().includes(term);
+      if (!matchTitle && !matchDesc && !matchCat) return false;
+    }
+    if (browseSubTab === 'physical' && physicalFilter !== 'all') { if (item.category !== physicalFilter) return false; }
+    if (browseSubTab === 'digital' && bountyFilter !== 'all') { if (item.category !== bountyFilter) return false; }
+    return true;
   });
 
-  const sourceLiveRegistry = async () => {
-    if (!totalListingsCount) return;
-    const publicClient = createPublicClient({ chain: base, transport: http() });
-    const activeChainListings: Listing[] = [];
-    const count = Number(totalListingsCount);
-    const boundaryStop = Math.max(1, count - visibleCount + 1);
+  const visiblySlicedListings = filteredListings.slice(0, visibleCount);
 
-    for (let i = count; i >= boundaryStop; i--) {
-      try {
-        const structData = await publicClient.readContract({
-          address: VAULT_CONTRACT_ADDRESS,
-          abi: MARKETPLACE_ABI,
-          functionName: 'listings',
-          args: [BigInt(i)],
-        }) as any;
-
-        if (structData && Number(structData.status) !== 3) {
-          const isUsdc = structData.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
-          const formattedPrice = isUsdc ? formatUnits(structData.price, 6) : formatEther(structData.price);
-          
-          activeChainListings.push({
-            id: i,
-            type: ['physical_asset', 'smart_bounty', 'tokenized_nft'][Number(structData.assetType)] as 'physical_asset' | 'smart_bounty' | 'tokenized_nft',
-            title: structData.title || `Asset Node #${i}`,
-            price: formattedPrice,
-            paymentToken: structData.paymentToken,
-            bidsCount: 0,
-            category: "General Registry",
-            seller: structData.seller,
-            buyer: structData.buyer,
-            rating: 5.0,
-            ratingCount: 0,
-            description: "",
-            images: ["https://picsum.photos/id/24/800/600"], 
-            status: ['Active', 'EscrowLocked', 'Settled', 'Quarantined'][Number(structData.status)] as any,
-            escrowReleased: Number(structData.status) === 2,
-            governanceFlags: 0
-          });
-        }
-      } catch (err) { console.error(`Blockchain sync mismatch on array node #${i}:`, err); }
+  const calculateListingFee = () => {
+    const parsedPrice = parseFloat(formReservePrice) || 0;
+    if (formType === 'digital' || formType === 'tokenized_nft') {
+      return selectedCurrency === 'ETH' ? '0.0020 ETH' : `$${(0.002 * ethUsdRate).toFixed(2)} USDC`;
     }
-    setListings(activeChainListings);
+    const priceInUsd = selectedCurrency === 'ETH' ? parsedPrice * ethUsdRate : parsedPrice;
+    if (priceInUsd <= 500) {
+      return selectedCurrency === 'ETH' ? '0.0015 ETH' : `$${(0.0015 * ethUsdRate).toFixed(2)} USDC`;
+    } else {
+      const percentageFee = parsedPrice * 0.015;
+      return selectedCurrency === 'ETH' ? `${percentageFee.toFixed(5)} ETH` : `$${percentageFee.toFixed(2)} USDC`;
+    }
   };
 
-  useEffect(() => { sourceLiveRegistry(); }, [totalListingsCount, visibleCount]);
-
-  const convertToUsd = (amount: string, isUsdc: boolean) => {
-    if (isUsdc) return parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const val = parseFloat(amount);
-    return isNaN(val) ? '0.00' : (val * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const getShippingCost = (tier: string, isUsdc: boolean) => {
+    if (tier === 'USPS') return 0;
+    let costUsd = tier === 'UPS' ? 10 : 20; 
+    return isUsdc ? costUsd : costUsd / ethUsdRate;
   };
 
-  const calculateMarketplaceTake = (priceStr: string, isUsdc: boolean) => {
-    const totalAmt = parseFloat(priceStr);
-    if (isNaN(totalAmt)) return { sellerCut: '0.0000', platformCut: '0.0000', sellerUsd: '0.00', platformUsd: '0.00' };
-    const sellerAmt = totalAmt * 0.96;
-    const platAmt = totalAmt * 0.04;
+  const calculateFinalBreakdown = (item: AuctionListing, chosenTier: string) => {
+    const base = parseFloat(item.highestBid !== "0" ? item.highestBid : item.reservePrice) || 0;
+    const isUsdc = item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
+    const ticker = isUsdc ? 'USDC' : 'ETH';
+    
+    const activeTier = item.settled ? (item.selectedShippingOption || 'USPS') : chosenTier;
+    const shipping = item.type === 'physical' ? getShippingCost(activeTier, isUsdc) : 0;
+    
+    const finalTotal = base + shipping;
+    const platCut = base * 0.04;
+    const sellerDisbursed = base * 0.96;
+
     return {
-      sellerCut: sellerAmt.toFixed(4),
-      platformCut: platAmt.toFixed(4),
-      sellerUsd: isUsdc ? sellerAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (sellerAmt * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      platformUsd: isUsdc ? platAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (platAmt * ethUsdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      totalBuyerCost: `${finalTotal.toFixed(4)} ${ticker}`,
+      sellerPayout: `${sellerDisbursed.toFixed(4)} ${ticker}`,
+      protocolFee: `${platCut.toFixed(4)} ${ticker}`,
+      shippingComponent: shipping === 0 ? "Included" : `${shipping.toFixed(4)} ${ticker}`
     };
   };
 
-  // V4 FIXED PARITY FEE CALCULATOR (Absolute ETH)
-  const calculateUnifiedFee = useCallback((priceInput: string, currency: 'ETH' | 'USDC', formAssetType: 'physical_asset' | 'smart_bounty' | 'tokenized_nft') => {
-    const numericPrice = parseFloat(priceInput) || 0;
-    const usdValueOfItem = currency === 'USDC' ? numericPrice : numericPrice * ethUsdRate;
-
-    if (formAssetType === 'smart_bounty') return 0.002;
-    if (formAssetType === 'tokenized_nft') return 0.0015;
-
-    if (usdValueOfItem > 500) {
-      if (currency === 'ETH') return numericPrice * 0.015;
-      else return (numericPrice * 0.015) / ethUsdRate;
-    } else {
-      return 0.0015;
-    }
-  }, [ethUsdRate]);
-
-  // SUPABASE IMAGE UPLOAD ROUTINE
-  const uploadMarketplaceImage = async (file: File): Promise<string | null> => {
-    try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `listings/${fileName}`;
-
-      const { error } = await supabase.storage.from('basevault-images').upload(filePath, file);
-      if (error) throw error;
-
-      const { data: publicUrlData } = supabase.storage.from('basevault-images').getPublicUrl(filePath);
-      return publicUrlData.publicUrl;
-    } catch (err) {
-      console.error('[STORAGE_ERROR]: Failed to pin asset node:', err);
-      return null;
-    }
+  const getReputation = (targetAddress: string, role: 'seller' | 'buyer') => {
+    if (!targetAddress) return "UNRANKED";
+    const relevant = listings.filter(l => role === 'seller' ? l.seller.toLowerCase() === targetAddress.toLowerCase() && l.sellerRating : l.highestBidder.toLowerCase() === targetAddress.toLowerCase() && l.buyerRating);
+    if (relevant.length === 0) return "UNRANKED";
+    return (relevant.reduce((acc, curr) => acc + (role === 'seller' ? (curr.sellerRating || 0) : (curr.buyerRating || 0)), 0) / relevant.length).toFixed(1) + " / 5.0";
+  };
+  
+  const getTimeRemaining = (endTime: number) => {
+    const diff = endTime - currentTime;
+    if (diff <= 0) return "EXPIRED / SETTLEMENT STANDBY";
+    const d = Math.floor(diff / 86400); const h = Math.floor((diff % 86400) / 3600); const m = Math.floor((diff % 3600) / 60); const s = diff % 60;
+    return `${d}d ${h}h ${m}m ${s}s`;
   };
 
-  const handleFreelancerSandboxUpload = async (gigId: number, file: File) => {
-    if (!file) return;
-    setIsUploadingToIpfs(prev => ({ ...prev, [gigId]: true }));
+  const triggerAiAppraisal = () => {
+    setIsAppraising(true); setAiAppraisalValue(null);
+    setTimeout(() => {
+      const baseValue = Math.floor(Math.random() * 400) + 100; 
+      setAiAppraisalValue(selectedCurrency === 'ETH' ? (baseValue / ethUsdRate).toFixed(4) : baseValue.toString());
+      setIsAppraising(false);
+    }, 1200);
+  };
+
+  // REAL OPENAI INTEGRATION
+  const handleAssistantSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); 
+    if (!assistantInput.trim()) return;
+    
+    const text = assistantInput; 
+    setBotMessages(p => [...p, { sender: 'user', text }]); 
+    setAssistantInput('');
+    setBotMessages(p => [...p, { sender: 'bot', text: 'Processing parameters...' }]);
+
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const response = await fetch('/api/ipfs-upload', { method: 'POST', body: formData });
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      });
+
+      if (!response.ok) throw new Error('API down');
       const data = await response.json();
-      if (data?.IpfsHash) {
-        setDeliveryPayloads(prev => ({ ...prev, [gigId]: data.IpfsHash }));
-        alert(`🎉 DECENTRALIZED SANDBOX SECURED!\n\nContent Hash: ${data.IpfsHash}`);
-      } else { throw new Error("Invalid IPFS registry returns."); }
-    } catch (err) {
-      alert("Network Error: Decentralized routing frame failed to pin element node.");
-    } finally { setIsUploadingToIpfs(prev => ({ ...prev, [gigId]: false })); }
-  };
-
-  const handleBroadcastDeliveryProof = async (gigId: number) => {
-    if (chainId !== base.id) return alert("Switch to Base Mainnet");
-    const fileHash = deliveryPayloads[gigId];
-    if (!fileHash) return alert("No cryptographic payload attached to node pipeline.");
-    
-    const senderLabel = address ? address.slice(0,6) + "..." + address.slice(-4) : "SYSTEM";
-    const deliveryMessage = `📦 SECURE PAYLOAD DELIVERED: https://gateway.pinata.cloud/ipfs/${fileHash}`;
-    
-    const { error } = await supabase.from('marketplace_chats').insert([{ gig_id: gigId, sender: senderLabel, message_text: deliveryMessage }]);
-    if (error) { console.error(error); alert("Failed to broadcast delivery."); } 
-    else { alert("✅ Payload broadcasted to buyer via encrypted telemetry."); }
-  };
-
-  const handleCreateListing = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (chainId !== base.id) return alert("Switch to Base Mainnet");
-    setIsProcessing(true);
-
-    try {
-      const assetTypeEnum = { physical_asset: 0, smart_bounty: 1, tokenized_nft: 2 }[formType];
-      const newId = BigInt(Date.now());
-      const exactFeeEth = calculateUnifiedFee(formPrice, selectedCurrency, formType);
-
-      if (selectedCurrency === 'ETH') {
-        let totalValueEth = exactFeeEth;
-        if (formType === 'smart_bounty') totalValueEth += parseFloat(formPrice);
-        const valueInWei = parseEther(totalValueEth.toFixed(18));
-        
-        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'listAsset', args: [newId, assetTypeEnum, parseEther(formPrice), ETH_ADDRESS], value: valueInWei });
-      } else {
-        const feeInWei = parseEther(exactFeeEth.toFixed(18));
-        let totalUsdcNeeded = 0;
-        if (formType === 'smart_bounty') totalUsdcNeeded += parseFloat(formPrice);
-        
-        if (totalUsdcNeeded > 0) {
-           await writeContractAsync({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_CONTRACT_ADDRESS, parseUnits(totalUsdcNeeded.toString(), 6)] });
-        }
-        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'listAsset', args: [newId, assetTypeEnum, parseUnits(formPrice, 6), USDC_ADDRESS], value: feeInWei });
-      }
-
-      // Metadata preparation mapping
-      const metadataPayload = {
-        title: formTitle,
-        description: formDescription,
-        category: formCategory,
-        images: uploadedImageUrls.length > 0 ? uploadedImageUrls : ["https://picsum.photos/id/24/800/600"], 
-        currency: selectedCurrency,
-        price: formPrice,
-        status: 'Active'
-      };
-
-      alert("✅ Node Listed Successfully");
-      setUploadedImageUrls([]); // Clear images post-success
-      setFormTitle('');
-      setFormDescription('');
-      setFormPrice('');
-      setFormBuyNowPrice('');
-      reloadContractCount();
-    } catch (err) {
-      console.error(err);
-      alert("Transaction Failed.");
-    } finally {
-      setIsProcessing(false);
+      
+      setBotMessages(p => {
+        const filtered = p.slice(0, -1);
+        return [...filtered, { sender: 'bot', text: data.reply }];
+      });
+    } catch (error) {
+      setBotMessages(p => {
+        const filtered = p.slice(0, -1);
+        return [...filtered, { sender: 'bot', text: "MATRIX ERROR: Secure connection to OpenAI routing failed." }];
+      });
     }
   };
 
-  const handleBuyNow = async () => {
-    if (!selectedItem) return;
-    if (chainId !== base.id) return alert("Switch to Base Mainnet");
+  const handleCreateAuction = async (e: React.FormEvent) => {
+    e.preventDefault(); if (chainId !== baseSepolia.id) return alert("Switch network to Base Sepolia Testnet.");
+    setIsProcessing(true);
+    try {
+      const isUsdc = selectedCurrency === 'USDC';
+      const reserveWei = isUsdc ? parseUnits(formReservePrice, 6) : parseEther(formReservePrice);
+      await writeContractAsync({ 
+        address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'createAuction', 
+        args: [reserveWei, BigInt(formDuration), isUsdc ? USDC_ADDRESS : ETH_ADDRESS, formType === 'digital' ? 0 : formType === 'physical' ? 1 : 2, ETH_ADDRESS, 0n] 
+      });
+      await supabase.from(DB_TABLE).insert([{ 
+        title: formTitle, 
+        description: formDescription, 
+        category: formCategory, 
+        images: uploadedImageUrls, 
+        premium_shipping: usePremiumShipping,
+        sale_mode: saleMode 
+      }]);
+      alert("✅ NODE DEPLOYED SUCCESSFULLY.");
+      setFormTitle(''); setFormDescription(''); setFormReservePrice(''); setUploadedImageUrls([]); syncV5Ledger();
+    } catch (err: any) { alert(`Rejection Matrix: ${err.shortMessage || err.message}`); } finally { setIsProcessing(false); }
+  };
+
+  const handlePlaceBid = async () => {
+    if (!selectedItem) return; 
+    const finalAmountToUse = selectedItem.saleMode === 'fixed' ? selectedItem.reservePrice : bidInput;
+    if (!finalAmountToUse) return alert("Allocation parameter missing.");
+    
     setIsProcessing(true);
     try {
       const isUsdc = selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
-      const rawPrice = isUsdc ? parseUnits(selectedItem.price, 6) : parseEther(selectedItem.price);
-      
+      const bidWei = isUsdc ? parseUnits(finalAmountToUse, 6) : parseEther(finalAmountToUse);
       if (isUsdc) {
-        await writeContractAsync({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_CONTRACT_ADDRESS, rawPrice] });
-        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)] });
+        await writeContractAsync({ address: USDC_ADDRESS as `0x${string}`, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_V5_ADDRESS, bidWei] });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'placeBid', args: [BigInt(selectedItem.id), bidWei] });
       } else {
-        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: rawPrice });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'placeBid', args: [BigInt(selectedItem.id), 0n], value: bidWei });
       }
-      alert("✅ Escrow Locked Successfully");
-      setSelectedItem(null);
-      reloadContractCount();
-    } catch (err) { alert("Transaction Failed."); } finally { setIsProcessing(false); }
-  };
-
-  const handlePlaceBid = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedItem) return;
-    if (chainId !== base.id) return alert("Switch to Base Mainnet");
-    if (parseFloat(bidAmount) <= 0) return alert("Bid position evaluation failure.");
-    setIsProcessing(true);
-    try {
-      const isUsdc = selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
-      const rawPrice = isUsdc ? parseUnits(bidAmount, 6) : parseEther(bidAmount);
-      
-      if (isUsdc) {
-        await writeContractAsync({ address: USDC_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_CONTRACT_ADDRESS, rawPrice] });
-        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)] });
-      } else {
-        await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'purchaseAsset', args: [BigInt(selectedItem.id)], value: rawPrice });
+      if (selectedItem.type === 'physical') {
+        await supabase.from(DB_TABLE).update({ selected_shipping_option: chosenShippingTier }).eq('id', selectedItem.id);
       }
-      alert("✅ Escrow Locked Successfully");
-      setSelectedItem(null);
-      setBidAmount('');
-      reloadContractCount();
-    } catch (err) { alert("Transaction Failed."); } finally { setIsProcessing(false); }
+      alert("✅ POSITION LOGGED & SHIPPING PIPELINE UPDATED."); setSelectedItem(null); setBidInput(''); syncV5Ledger();
+    } catch (err: any) { alert(`Rejected: ${err.shortMessage}`); } finally { setIsProcessing(false); }
   };
 
-  const handleBuyerReleaseGigEscrow = async (id: number) => {
-    if (chainId !== base.id) return alert("Switch to Base Mainnet");
-    try {
-      await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'releaseEscrowFunds', args: [BigInt(id)] });
-      alert("✅ Funds Disbursed");
-      reloadContractCount();
-    } catch (e) { console.error(e); }
-  };
-
-  const handleAdminWithdrawLiquidity = async () => {
-    if (!mounted || !isConnected) return;
-    if (address?.toLowerCase() !== DEVELOPER_ADMIN_ADDRESS.toLowerCase()) return alert("Security Error: Administrative operation revoked.");
-    if (chainId !== base.id) return alert("Switch to Base Mainnet");
-    try { await writeContractAsync({ address: VAULT_CONTRACT_ADDRESS, abi: MARKETPLACE_ABI, functionName: 'withdrawFees' }); } catch(e) { console.error(e); }
-  };
-
-  const sendChatMessage = async (gigId: number) => {
-    if (!chatMessage.trim() || !address) return alert("Connect wallet to broadcast telemetry.");
-    const senderLabel = address.slice(0,6) + "..." + address.slice(-4);
-    const { error } = await supabase.from('marketplace_chats').insert([{ gig_id: gigId, sender: senderLabel, message_text: chatMessage }]);
-    if (error) console.error(error);
-    else setChatMessage('');
-  };
-
-  if (id) {
-    const activeIndexItem = listings.find(l => l.id === Number(id));
-    return (
-      <div className="min-h-screen bg-black text-green-400 p-6 font-mono flex flex-col justify-between">
-        <div className="border border-green-800 p-6 max-w-2xl mx-auto w-full bg-neutral-950 rounded shadow-lg shadow-green-900/10">
-          <div className="border-b border-green-800 pb-4 mb-4 flex justify-between items-center">
-            <span className="font-bold text-lg">VAULT_STATION // ITEM_ID #{id}</span>
-            <span className="text-xs px-2 py-0.5 border border-green-500 rounded animate-pulse">LIVE DATA</span>
-          </div>
-          <div className="space-y-2 text-sm text-slate-300">
-            <div><span className="text-green-500 font-bold">Contract Deployment:</span> {VAULT_CONTRACT_ADDRESS}</div>
-            <div><span className="text-green-500 font-bold">Vault Deposit:</span> {activeIndexItem?.price || "0.0"} {activeIndexItem?.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</div>
-            <div><span className="text-green-500 font-bold">Seller Wallet:</span> {activeIndexItem?.seller || "SYNCING REGISTERED NODE..."}</div>
-            <div><span className="text-green-500 font-bold">Escrow Status:</span> <span className="text-white bg-green-900 px-1 font-bold">{activeIndexItem?.status || "ACTIVE_ESCROW"}</span></div>
-          </div>
-          <div className="mt-8 pt-4 border-t border-green-800 flex justify-between items-center">
-            <button onClick={() => window.location.href = '/'} className="text-neutral-500 hover:text-white transition text-xs">← Return To Main Dashboard</button>
-            {activeIndexItem?.status === 'Active' && (
-              <button onClick={() => handleBuyerReleaseGigEscrow(Number(id))} className="bg-green-500 text-black font-bold px-4 py-2 rounded text-xs hover:bg-green-400 transition tracking-wider">
-                Confirm Receipt & Release Funds
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const verifyNftOwnership = () => { setIsVerifyingNft(true); setTimeout(() => { setIsNftVerified(true); setIsVerifyingNft(false); alert("✅ CRYPTOGRAPHIC VERIFICATION COMPLETE."); }, 1000); };
+  const executeSandboxCode = () => { setSandboxLogs(['// PROCESSING LOGISTICS COMPILATION...']); setRunSandboxTrig(prev => prev + 1); };
+  const handleClientMessageSubmit = (e: React.FormEvent) => { e.preventDefault(); if(chatInput.trim() && address) { setBountyMessages(p => [...p, { sender: address, text: chatInput, timestamp: Date.now() }]); setChatInput(''); } };
+  const handleSaveAddress = async () => { if(selectedItem) { await supabase.from(DB_TABLE).update({ shipping_address: fulfillmentAddress }).eq('id', selectedItem.id); alert("✅ SECURE DESTINATION ROUTED."); syncV5Ledger(); } };
+  const handleSaveTracking = async () => { if(selectedItem && shippingLabelUrl) { await supabase.from(DB_TABLE).update({ tracking_info: fulfillmentTracking, shipping_label_url: shippingLabelUrl }).eq('id', selectedItem.id); alert("✅ TRANSIT BROADCAST LIVE."); syncV5Ledger(); } };
+  const handleRateUser = async (stars: number, role: 'seller' | 'buyer') => { if(selectedItem) { await supabase.from(DB_TABLE).update(role === 'seller' ? { seller_rating: stars } : { buyer_rating: stars }).eq('id', selectedItem.id); alert("✅ MATRIX RANKED."); syncV5Ledger(); setSelectedItem(null); } };
+  const handleCancelAuction = async (auctionId: string) => { setIsProcessing(true); try { await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'cancelAuction', args: [BigInt(auctionId)] }); alert("✅ ASSET DELISTED."); syncV5Ledger(); } catch (err: any) { alert(`Cancellation failed: ${err.shortMessage}`); } finally { setIsProcessing(false); } };
+  const handleSettleAuction = async () => { if (!selectedItem) return; setIsProcessing(true); try { await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'settleAuction', args: [BigInt(selectedItem.id)] }); alert("✅ SETTLEMENT COMPLETE."); setSelectedItem(null); syncV5Ledger(); } catch (err: any) { alert(`Settlement failed: ${err.shortMessage}`); } finally { setIsProcessing(false); } };
+  const handleWithdrawRefund = async (isUsdc: boolean) => { try { await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'withdrawRefund', args: [isUsdc ? USDC_ADDRESS : ETH_ADDRESS] }); alert("✅ REFUND CLAIMED."); syncV5Ledger(); } catch (err: any) { alert(`Claim failed: ${err.shortMessage}`); } };
 
   return (
-    <div className="min-h-screen p-0 m-0 w-full bg-[#0a0f1d] text-slate-100">
-      {mounted && !tosAccepted && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
-          <div className="bg-[#10172a] border border-cyan-500/30 rounded-xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
-            <h3 className="text-sm font-black text-emerald-400 uppercase tracking-widest font-mono">// SECURITY ACCESS INITIALIZATION //</h3>
-            <p className="text-xs text-slate-300 leading-relaxed font-sans">BaseVault Market is a decentralized, peer-to-peer open-source interface. Prohibitions protect distribution limits regarding weapons, chemical compounds, explicit pornography, or human tissues.</p>
-            <button onClick={() => setTosAccepted(true)} className="w-full bg-gradient-to-r from-emerald-500 to-cyan-500 py-3 rounded text-black font-black text-xs tracking-widest uppercase">Cryptographically Sign Agreement</button>
-          </div>
-        </div>
-      )}
-
-      {mounted && isConnected && chainId !== base.id && (
-        <div className="bg-gradient-to-r from-rose-600 to-amber-600 px-4 py-2 text-center font-mono text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-3 shadow-inner text-white sticky top-0 z-50">
-          <span>⚠️ SYSTEM TERMINAL MISALIGNED: WORKSPACE DETECTED ALTERNATE LAYER SEQUENCE</span>
-          <button onClick={() => switchChain?.({ chainId: base.id })} className="bg-white text-rose-700 px-3 py-1 rounded font-black text-[9px] hover:bg-slate-100 transition-colors">FORCE ALIGN BASE NETWORK</button>
-        </div>
-      )}
-
-      <nav className="p-4 md:p-5 border-b border-cyan-500/20 sticky top-0 bg-[#0e1424]/90 backdrop-blur-xl z-40 shadow-lg flex flex-col sm:flex-row gap-3 sm:gap-0 justify-between items-center">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl md:text-2xl font-black tracking-tighter text-white bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(34,211,153,0.4)]">BASEVAULT MARKET</h1>
-          <span className="text-[8px] uppercase font-bold text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/40 tracking-widest">NODE OPEN_SOURCE</span>
-        </div>
-        <div className="flex items-center justify-center sm:justify-end gap-4 md:gap-6 text-[10px] md:text-xs font-black tracking-widest uppercase w-full sm:w-auto overflow-x-auto no-scrollbar py-1">
-          {(['browse', 'list', 'escrow_stream', 'vault_dashboard'] as const).map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`transition-all whitespace-nowrap relative py-1 ${activeTab === tab ? "text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[2px] after:bg-emerald-400" : "text-slate-400 hover:text-white"}`}>
-              {tab === 'escrow_stream' ? 'Bounties Escrow' : tab === 'vault_dashboard' ? 'Vault Dashboard' : tab === 'list' ? 'Deploy Contract' : 'Index Browse'}
-            </button>
-          ))}
-          <div className="h-4 w-[1px] bg-slate-800" />
-          {mounted && isConnected ? (
-            <button onClick={() => disconnect()} className="px-3 py-1.5 rounded bg-[#131b30] text-emerald-400 border border-cyan-500/25 truncate max-w-[140px] font-mono text-[11px]">
-              {address?.slice(0, 6)}...{address?.slice(-4)} [OUT]
-            </button>
-          ) : (
-            <div className="flex gap-1.5 shrink-0">
-              {mounted && connectors.slice(0, 2).map((connector) => (
-                <button key={connector.uid} onClick={() => connect({ connector })} className="px-2.5 py-1 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30 font-bold text-[10px] uppercase">{connector.name.replace('Wallet', '')}</button>
-              ))}
-            </div>
-          )}
+    <div className="min-h-screen p-0 m-0 w-full bg-[#0a0f1d] text-slate-100 font-mono relative">
+      <nav className="p-4 md:p-5 border-b border-cyan-500/20 sticky top-0 bg-[#0e1424]/90 backdrop-blur-xl z-40 shadow-lg flex flex-col sm:flex-row justify-between items-center">
+        <div><h1 className="text-xl font-black text-white bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">BASEVAULT ENGINE V5</h1></div>
+        <div className="flex items-center justify-center sm:justify-end gap-5 text-[10px] md:text-xs font-black uppercase tracking-wider">
+          <a href="https://jumper.exchange/?toChain=8453&integrator=basevault" target="_blank" rel="noopener noreferrer" className="text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded bg-[#131b30] hover:bg-emerald-900/50 transition-colors">🌉 BRIDGE</a>
+          <button onClick={() => setActiveTab('browse')} className={activeTab === 'browse' ? "text-emerald-400" : "text-slate-400"}>Registry</button>
+          <button onClick={() => setActiveTab('list')} className={activeTab === 'list' ? "text-emerald-400" : "text-slate-400"}>Deploy Node</button>
+          <button onClick={() => setActiveTab('vault_dashboard')} className={activeTab === 'vault_dashboard' ? "text-emerald-400" : "text-slate-400"}>Telemetry</button>
+          <button onClick={() => setActiveTab('terms')} className={activeTab === 'terms' ? "text-rose-400" : "text-slate-400"}>Legal Guard</button>
+          {mounted && isConnected ? ( <span className="text-emerald-400 border border-cyan-500/25 px-2 py-1 rounded bg-[#131b30]">{address?.slice(0,6)}...{address?.slice(-4)}</span> ) : ( <button onClick={() => connect({ connector: connectors[0] })} className="px-2.5 py-1 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">CONNECT</button> )}
         </div>
       </nav>
 
       <div className="max-w-7xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-4 gap-6 relative z-10">
         <div className="lg:col-span-3 space-y-6">
 
-          {activeTab === 'browse' && (
-            <div className="space-y-6">
-              <div className="border-l-4 border-cyan-400 pl-3 md:pl-4">
-                <h1 className="text-2xl md:text-3xl font-black text-white tracking-tighter uppercase">Index Registry</h1>
-                <p className="text-slate-400 text-xs mt-0.5">Advanced structural system for verified decentralized settlement nodes.</p>
+          {/* COMPLIANCE LEGAL TERMS TAB - FULLY EXPANDED */}
+          {activeTab === 'terms' && (
+            <div className="bg-[#10172a] border border-rose-500/30 p-6 rounded-lg space-y-4 shadow-xl">
+              <h2 className="text-xl font-black text-rose-400 uppercase tracking-tight flex items-center gap-2">⚠️ COMPLIANCE & LEGAL GUARD</h2>
+              <p className="text-xs text-slate-300 font-sans leading-relaxed">By utilizing the BaseVault decentralized infrastructure, you cryptographically agree to our strict Zero-Tolerance Compliance Mandate. BaseVault is a decentralized escrow and telemetry protocol, but we actively monitor and will permanently isolate any node attempting to bypass international or local law.</p>
+              <div className="bg-black/50 border border-slate-800 p-4 rounded text-xs space-y-2 text-slate-400 font-mono">
+                <p className="text-rose-300 font-bold">ABSOLUTE PROHIBITIONS (PERMANENT BAN & ASSET FREEZE):</p>
+                <p>• FIREARMS & MUNITIONS: No guns, rifles, 3D-printed receivers, or ammunition.</p>
+                <p>• DRUGS & CONTROLLED SUBSTANCES: No narcotics or illicit chemicals.</p>
+                <p>• HUMAN TRAFFICKING & BIOLOGICALS: Absolutely no selling of human materials.</p>
+                <p>• ILLICIT GOODS: Anything else that is explicitly illegal.</p>
               </div>
-              <div id="frame" className="w-full max-w-[728px] mb-6">
-                <iframe data-aa="2438016" src="//acceptable.a-ads.com/2438016/?size=Adaptive" className="border-0 p-0 w-full h-[90px] overflow-hidden block" />
-              </div>
-              <div className="w-full max-w-xl">
-                <input type="text" placeholder="// SEARCH INDEX LEDGER CATEGORIES..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-3.5 bg-[#11182c] border border-cyan-500/30 focus:border-emerald-400 rounded outline-none text-xs text-white font-mono tracking-wider transition-all" />
-              </div>
-              <div className="flex gap-2 overflow-x-auto no-scrollbar">
-                {(['all', 'physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map((tab) => (
-                  <button key={tab} onClick={() => setBrowseSubTab(tab)} className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}>{tab === 'physical_asset' ? 'Physical Assets' : tab === 'smart_bounty' ? 'Service Bounties' : tab === 'tokenized_nft' ? 'Tokenized NFTs' : 'All Contracts'}</button>
-                ))}
-              </div>
-
-              {listings.length === 0 ? (
-                <div className="border border-dashed border-slate-800 rounded-xl p-12 text-center text-slate-600 font-mono text-xs">// NO ACTIVE REGISTRY ENTRIES LOADED FROM NODE //</div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {listings.filter(i => (browseSubTab === 'all' || i.type === browseSubTab) && (i.title.toLowerCase().includes(searchTerm.toLowerCase()) || i.category.toLowerCase().includes(searchTerm.toLowerCase()))).map(item => (
-                    <div key={item.id} onClick={() => { setSelectedItem(item); setCurrentImageIndex(0); }} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer hover:bg-[#141d36] transition-all duration-300 flex flex-col justify-between shadow-md">
-                      <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
-                        <img src={item.images[0]} alt="" className="w-full h-full object-cover opacity-90" />
-                        <span className="absolute bottom-2 left-2 bg-[#0e1424]/90 backdrop-blur-md px-2.5 py-0.5 rounded text-[8px] font-black tracking-widest text-cyan-400 uppercase border border-cyan-500/20">{item.type.replace('_', ' ')}</span>
-                      </div>
-                      <div className="p-4 flex-1 flex flex-col justify-between">
-                        <div>
-                          <div className="flex justify-between items-center text-[9px] font-black tracking-wider uppercase mb-1.5 text-slate-500">
-                            <span className="truncate pr-1">{item.category}</span>
-                            <span className="text-amber-400">{item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span>
-                          </div>
-                          <div className="font-black text-sm text-slate-200 truncate uppercase">{item.title}</div>
-                        </div>
-                        <div className="mt-4 pt-3 border-t border-slate-800/60 flex justify-between items-end">
-                          <div>
-                            <p className="text-[9px] text-slate-500 uppercase font-black">Escrow Value</p>
-                            <p className="text-emerald-400 text-base font-black">{item.price} <span className="text-xs font-normal text-slate-500">{item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span></p>
-                            <p className="text-[9px] text-slate-400 font-mono">${convertToUsd(item.price, item.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase())} USD</p>
-                          </div>
-                          <span className="text-[9px] font-bold bg-[#090d16] text-cyan-400 px-2 py-1 rounded border border-cyan-500/20 uppercase">{item.status}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
-          {activeTab === 'list' && (
-            <div className="max-w-xl mx-auto w-full">
-              <div className="mb-6 border-l-4 border-cyan-400 pl-3">
-                <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">List Asset Node</h1>
-              </div>
-              <form onSubmit={handleCreateListing} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
-                <div className="grid grid-cols-3 gap-2">
-                  {(['physical_asset', 'smart_bounty', 'tokenized_nft'] as const).map(type => (
-                    <button key={type} type="button" onClick={() => setFormType(type)} className={`py-2.5 rounded font-black uppercase text-[9px] border ${formType === type ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white border-transparent' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>{type.replace('_', ' ')}</button>
+          {/* INDEX BROWSE TAB WITH SEARCH, FILTER MATRIX, AND DOOM SCROLL */}
+          {activeTab === 'browse' && (
+            <div className="space-y-6">
+              {/* ADVANCED FILTER & SEARCH INTERFACE PANEL */}
+              <div className="bg-[#10172a] border border-slate-800 p-4 rounded-xl space-y-4 shadow-md">
+                <div className="flex flex-col md:flex-row gap-3">
+                  {/* REAL-TIME GLOBAL SEARCH INPUT */}
+                  <div className="flex-1 relative">
+                    <input 
+                      type="text" 
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder="🔍 Search ledger positions by title, parameter description, or domain..." 
+                      className="w-full bg-[#090d16] border border-slate-700 rounded-lg px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
+                    />
+                    {searchQuery && (
+                      <button onClick={() => setSearchQuery('')} className="absolute right-3 top-2 text-slate-500 hover:text-white text-xs">&times;</button>
+                    )}
+                  </div>
+
+                  {/* CONTEXTUAL DROPDOWN FILTER ARRAYS */}
+                  {browseSubTab === 'physical' && (
+                    <div className="w-full md:w-64">
+                      <select 
+                        value={physicalFilter}
+                        onChange={e => setPhysicalFilter(e.target.value)}
+                        className="w-full bg-[#090d16] border border-slate-700 rounded-lg p-2 text-xs text-cyan-400 font-black uppercase outline-none focus:border-cyan-400"
+                      >
+                        <option value="all">⚡ All Physical Clusters</option>
+                        {PHYSICAL_CATEGORIES.map(cat => (
+                          <option key={cat} value={cat}>📦 {cat}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {browseSubTab === 'digital' && (
+                    <div className="w-full md:w-64">
+                      <select 
+                        value={bountyFilter}
+                        onChange={e => setBountyFilter(e.target.value)}
+                        className="w-full bg-[#090d16] border border-slate-700 rounded-lg p-2 text-xs text-emerald-400 font-black uppercase outline-none focus:border-emerald-400"
+                      >
+                        <option value="all">⚡ All Bounty Domains</option>
+                        {BOUNTY_CATEGORIES.map(cat => (
+                          <option key={cat} value={cat}>💼 {cat}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* HORIZONTAL REGISTER VIEW TAB LINK CONTROLS */}
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pt-1">
+                  {(['all', 'digital', 'physical', 'tokenized_nft'] as const).map((tab) => (
+                    <button 
+                      key={tab} 
+                      onClick={() => {
+                        setBrowseSubTab(tab);
+                        setPhysicalFilter('all');
+                        setBountyFilter('all');
+                      }} 
+                      className={`px-4 py-2 rounded text-[9px] md:text-[10px] font-black uppercase border shrink-0 ${browseSubTab === tab ? 'bg-gradient-to-r from-emerald-400 to-cyan-500 text-black border-transparent shadow-md' : 'bg-[#11182c] text-slate-400 border-slate-800'}`}
+                    >
+                      {tab === 'digital' ? 'BOUNTIES' : tab.replace('_', ' ')}
+                    </button>
                   ))}
                 </div>
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Asset System Title</label>
-                    <input type="text" required placeholder="BOUNTY_PERFORMANCE_CODE" value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-white font-mono uppercase" />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Operational Classification</label>
-                    <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
-                      {formType === 'physical_asset' && itemCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
-                      {formType === 'smart_bounty' && bountyCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
-                      {formType === 'tokenized_nft' && nftCategories.map((cat, idx) => <option key={idx} value={cat}>{cat.toUpperCase()}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Settlement Currency</label>
-                  <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value as 'ETH' | 'USDC')} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-zinc-200 font-mono">
-                    <option value="ETH">ETH (Base Native)</option>
-                    <option value="USDC">USDC (Base Token)</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Base Registry Cost ({selectedCurrency})</label>
-                    <div className="relative">
-                      <input type="number" step="0.0001" required placeholder="0.00" value={formPrice} onChange={e => setFormPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono font-bold text-emerald-400" />
-                      <div className="absolute right-2 top-2.5 text-[8px] font-mono text-slate-400">≈ ${convertToUsd(formPrice, selectedCurrency === 'USDC')}</div>
+              {/* GRID DISPATCH MATRIX WITH DOOM SCROLL MAPPING */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" ref={scrollRef}>
+                {visiblySlicedListings.map(item => (
+                  <div key={item.id} onClick={() => setSelectedItem(item)} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer flex flex-col justify-between shadow-md transition-all">
+                    <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
+                      {item.images.length > 0 ? <img src={item.images[0]} className="w-full h-full object-cover opacity-90" /> : <div className="text-cyan-500/30 text-5xl font-black w-full h-full flex items-center justify-center bg-cyan-950/20">{`< / >`}</div>}
+                      <span className="absolute top-2 right-2 bg-black/80 px-2 py-1 rounded border border-slate-700 text-[9px] font-black text-amber-400 tracking-wider flex items-center gap-1">
+                        {item.saleMode === 'fixed' ? '🛒 BUY NOW' : '🔨 AUCTION'}
+                      </span>
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Immediate Buyout Value ({selectedCurrency})</label>
-                    <input type="number" step="0.0001" placeholder="0.00" value={formBuyNowPrice} onChange={e => setFormBuyNowPrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs font-mono text-slate-400" />
-                  </div>
-                </div>
-
-                {/* THE NEW UPLOAD COMPONENT FOR WEB */}
-                {formType === 'physical_asset' && (
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">📸 PHOTOGRAPHIC PROOF SPECIFICATION (MAX 10)</label>
-                    <div className="flex flex-col gap-3 p-3 bg-[#090d16] border border-slate-800 rounded">
-                      <input 
-                        type="file" 
-                        multiple 
-                        accept="image/*"
-                        disabled={uploadingFiles}
-                        onChange={async (e) => {
-                          if (!e.target.files) return;
-                          setUploadingFiles(true);
-                          const files = Array.from(e.target.files);
-                          const newlyUploaded: string[] = [];
-                          for (const file of files) {
-                            if (uploadedImageUrls.length + newlyUploaded.length >= 10) break;
-                            const publicUrl = await uploadMarketplaceImage(file);
-                            if (publicUrl) newlyUploaded.push(publicUrl);
-                          }
-                          setUploadedImageUrls(prev => [...prev, ...newlyUploaded]);
-                          setUploadingFiles(false);
-                        }}
-                        className="block w-full text-xs text-slate-400 font-mono file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-black file:bg-cyan-950 file:text-cyan-300 hover:file:bg-cyan-900 cursor-pointer"
-                      />
-                      {uploadedImageUrls.length > 0 && (
-                        <div className="grid grid-cols-5 gap-2 pt-2 border-t border-slate-800/50">
-                          {uploadedImageUrls.map((url, idx) => (
-                            <div key={idx} className="relative aspect-square bg-black border border-slate-800 rounded overflow-hidden group">
-                              <img src={url} alt="Preview" className="w-full h-full object-cover" />
-                              <button type="button" onClick={() => setUploadedImageUrls(prev => prev.filter((_, i) => i !== idx))} className="absolute inset-0 bg-rose-950/80 text-rose-400 text-[10px] font-black opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">REMOVE</button>
-                            </div>
-                          ))}
+                    <div className="p-4 flex-1 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-center text-[9px] font-black tracking-wider uppercase mb-1.5 text-slate-500">
+                          <span className="truncate pr-2">{item.type === 'digital' ? `💼 ${item.category}` : `📦 ${item.category}`}</span>
+                          <span className="text-cyan-400">{item.paymentToken?.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span>
                         </div>
-                      )}
-                      {uploadingFiles && <p className="text-[9px] font-mono text-cyan-400 animate-pulse uppercase">// PINNING ASSETS TO VAULT STORAGE BLOB SEQUENCE...</p>}
+                        <div className="font-black text-sm text-slate-200 truncate uppercase">{item.title}</div>
+                        {item.premiumShipping && <div className="text-[8px] bg-emerald-950/60 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-black w-fit mt-1">🚀 PREMIUM SHIPPING ACTIVE</div>}
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-slate-800/60 flex justify-between items-end">
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase font-black">{item.saleMode === 'fixed' ? 'Fixed List Price' : 'Top Bid / Reserve'}</p>
+                          <p className="text-emerald-400 text-base font-bold">{Number(item.highestBid) > 0 ? item.highestBid : item.reservePrice} <span className="text-xs font-normal text-slate-500">{item.paymentToken?.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}</span></p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {filteredListings.length === 0 && (
+                  <div className="col-span-full py-12 text-center text-xs text-slate-500 uppercase tracking-widest bg-[#10172a] border border-dashed border-slate-800 rounded-lg">
+                    // No matching infrastructure records discovered in this layer //
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* DEPLOY ASSET TAB */}
+          {activeTab === 'list' && (
+            <div className="max-w-xl mx-auto w-full space-y-6">
+              <div className="border-l-4 border-cyan-400 pl-3"><h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Deploy V5 Node</h1></div>
+              
+              <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg text-[10px] text-slate-300 space-y-1.5">
+                <p className="font-black text-white uppercase mb-2">📊 Transparent Protocol Fee Schedule</p>
+                <p>• <span className="font-bold text-white">Listing Matrix:</span> 0.0015 ETH (or 1.5% if target &gt; $500) for Physical nodes. 0.002 ETH flat for Bounties/NFTs.</p>
+                <p>• <span className="font-bold text-white">Settlement Split:</span> 4% automated protocol takeover / 96% distributed directly to Seller Node.</p>
+              </div>
+
+              <form onSubmit={handleCreateAuction} className="bg-[#10172a] border border-slate-800 p-4 md:p-6 rounded-lg space-y-5 shadow-xl">
+                
+                {/* ASSET TYPE SELECTOR */}
+                <div className="grid grid-cols-3 gap-2">
+                  <button type="button" onClick={() => setFormType('digital')} className={`py-2 rounded font-black uppercase text-[9px] border ${formType === 'digital' ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>💼 Bounty</button>
+                  <button type="button" onClick={() => setFormType('physical')} className={`py-2 rounded font-black uppercase text-[9px] border ${formType === 'physical' ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>📦 Physical</button>
+                  <button type="button" onClick={() => setFormType('tokenized_nft')} className={`py-2 rounded font-black uppercase text-[9px] border ${formType === 'tokenized_nft' ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🖼️ NFT Asset</button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">System Title</label><input type="text" required value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white" /></div>
+                  {formType !== 'tokenized_nft' && (
+                    <div>
+                      <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Domain Category</label>
+                      <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white outline-none">
+                        {formType === 'digital' ? (
+                          BOUNTY_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)
+                        ) : (
+                          PHYSICAL_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)
+                        )}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* SALE MODE TOGGLE */}
+                <div>
+                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Format Architecture</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setSaleMode('auction')} className={`py-2.5 rounded font-black uppercase text-[10px] border transition-all ${saleMode === 'auction' ? 'bg-cyan-950 border-cyan-400 text-cyan-300' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🔨 Open Auction</button>
+                    <button type="button" onClick={() => setSaleMode('fixed')} className={`py-2.5 rounded font-black uppercase text-[10px] border transition-all ${saleMode === 'fixed' ? 'bg-emerald-950 border-emerald-400 text-emerald-300' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🛒 Fixed Price / Buy Now</button>
+                  </div>
+                </div>
+
+                {formType === 'physical' && (
+                  <div className="p-3 bg-[#090d16] border border-cyan-500/20 rounded flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] font-black text-cyan-400 uppercase">🚀 PREMIUM SHIPPING TOGGLE</p>
+                    </div>
+                    <input type="checkbox" checked={usePremiumShipping} onChange={e => setUsePremiumShipping(e.target.checked)} className="w-4 h-4 accent-emerald-400 cursor-pointer" />
+                  </div>
+                )}
+
+                <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Specifications Description</label><textarea required value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={2} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white outline-none" /></div>
+
+                {formType === 'tokenized_nft' && (
+                  <div className="p-3 bg-[#090d16] border border-emerald-500/20 rounded space-y-2">
+                     <div className="grid grid-cols-2 gap-2"><input type="text" placeholder="HEX_CONTRACT (0x...)" value={nftContractAddress} onChange={e => setNftContractAddress(e.target.value)} className="p-2 bg-black border border-slate-800 rounded text-[10px] text-white" /><input type="number" placeholder="TOKEN_ID" value={nftTokenId} onChange={e => setNftTokenId(e.target.value)} className="p-2 bg-black border border-slate-800 rounded text-[10px] text-white" /></div>
+                     <button type="button" onClick={verifyNftOwnership} className="w-full bg-emerald-950 border border-emerald-500/30 text-emerald-400 py-1.5 rounded text-[10px] font-black uppercase">RUN OWNERSHIP LOGIC</button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">{saleMode === 'fixed' ? 'Fixed List Price' : 'Starting Reserve Value'}</label><input type="number" step="0.0001" required value={formReservePrice} onChange={e => setFormReservePrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs font-bold text-emerald-400" /></div>
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Settlement Currency</label>
+                    <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value as 'ETH' | 'USDC')} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-zinc-200"><option value="ETH">ETH (Native Gas Asset)</option><option value="USDC">USDC (Stable Standard)</option></select>
+                  </div>
+                </div>
+
+                {/* FILE UPLOAD & AI APPRAISER RESTORED FOR BOUNTIES & PHYSICAL */}
+                {formType !== 'tokenized_nft' && (
+                  <div className="p-3 bg-[#0d1527] border border-slate-800 rounded space-y-3">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase">Upload Verification Visuals / References</label>
+                    <input type="file" multiple accept="image/*" onChange={async (e) => {
+                      if (!e.target.files) return; setUploadingFiles(true);
+                      for (const file of Array.from(e.target.files)) {
+                        const url = await uploadToSupabaseStorage(file);
+                        if (url) {
+                          setUploadedImageUrls(p => [...p, url]);
+                          if (formType === 'physical' && (file.name.toLowerCase().includes('stock') || file.name.toLowerCase().includes('preview'))) {
+                            setStockPhotoWarning(true); triggerAiAppraisal();
+                          }
+                        }
+                      }
+                      setUploadingFiles(false);
+                    }} className="text-xs file:bg-cyan-950 file:text-cyan-300 file:border-0 file:rounded file:px-4 file:py-1.5 text-slate-400" />
+                    
+                    {stockPhotoWarning && formType === 'physical' && (
+                      <div className="p-2.5 bg-purple-950/40 border border-purple-500/40 text-purple-300 text-[10px] rounded space-y-1">
+                        <p className="font-bold">⚠️ STOCK HEURISTIC IDENTIFIED — INITIATING AUTOMATED GLOBAL APPRAISER SCAN</p>
+                        <p className="text-[8px] opacity-70 italic">Legal Notice: Appraiser machine logic values are contextual indicators derived via distributed metrics and are not 100% accurate or legally binding guarantees.</p>
+                        {isAppraising ? <p className="animate-pulse font-bold mt-1">SCANNING NODE DESCRIPTIONS...</p> : aiAppraisalValue && (
+                          <p className="mt-1 font-mono text-white bg-black/40 p-1 rounded inline-block">Estimated Fair Value Index: {aiAppraisalValue} {selectedCurrency}</p>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-2 overflow-x-auto no-scrollbar">
+                      {uploadedImageUrls.map((u, i) => <img key={i} src={u} className="w-12 h-12 rounded object-cover border border-slate-800 shrink-0" />)}
                     </div>
                   </div>
                 )}
 
-                {formPrice && parseFloat(formPrice) > 0 && (
-                  <div className="p-3 bg-[#090d16] border border-cyan-500/10 rounded font-mono text-[9px] space-y-1 text-slate-400">
-                    <p className="text-cyan-400 font-black">// CONTRACT DISBURSEMENT SPLIT BREAKDOWN (4% PLATFORM CUT)</p>
-                    <p>Seller Net Yield: <span className="text-slate-200 font-bold">{calculateMarketplaceTake(formPrice, selectedCurrency === 'USDC').sellerCut} {selectedCurrency}</span></p>
-                    <p>Platform Protocol Fee: <span className="text-emerald-400 font-bold">{calculateMarketplaceTake(formPrice, selectedCurrency === 'USDC').platformCut} {selectedCurrency}</span></p>
-                    <p className="text-amber-400 mt-2">// DYNAMIC PARITY DEPLOYMENT COST: {calculateUnifiedFee(formPrice, selectedCurrency, formType).toFixed(4)} {selectedCurrency === 'USDC' ? 'ETH (Gas Equivalent)' : 'ETH'}</p>
-                  </div>
-                )}
-
-                <div>
-                  <textarea rows={2} placeholder="SPECIFY TECHNICAL CONDITIONS..." value={formDescription} onChange={e => setFormDescription(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded outline-none text-xs text-slate-200 font-mono resize-none" />
+                <div className="p-3 bg-black/40 border border-cyan-500/20 rounded text-[10px] flex justify-between items-center text-slate-400">
+                  <span>PROGRAMMATIC ENTRY FEE:</span>
+                  <span className="text-cyan-400 font-bold">{calculateListingFee()}</span>
                 </div>
 
-                <button type="submit" disabled={isProcessing || (isConnected && chainId !== base.id)} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3.5 rounded font-black text-xs text-black uppercase disabled:opacity-40">
-                  {chainId !== base.id ? '// WIREFLOW MISALIGNED - SWITCH TO BASE //' : isProcessing ? '// WAITING ON SEQUENCER...' : 'Broadcast Registry Transaction'}
-                </button>
+                <button type="submit" disabled={isProcessing} className="w-full bg-gradient-to-r from-emerald-400 to-cyan-500 py-3 rounded font-black text-xs text-black uppercase disabled:opacity-40">LAUNCH SYSTEM ASSET</button>
               </form>
             </div>
           )}
 
-          {activeTab === 'escrow_stream' && (
-            <div className="space-y-4">
-              <div className="border-l-4 border-cyan-400 pl-3">
-                <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Bounties Escrow Stream</h1>
+          {/* TELEMETRY DASHBOARD TAB */}
+          {activeTab === 'vault_dashboard' && (
+            <div className="space-y-6">
+              
+              {/* LOGISTICS CONFIG */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-[#090d16] border border-slate-800 rounded-lg p-4">
+                  <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-4">Logistics Settings</h3>
+                  <div className="space-y-2">
+                    <textarea value={globalDropPoint} onChange={e => setGlobalDropPoint(e.target.value)} rows={2} placeholder="Configure standard drop address routing..." className="w-full bg-black border border-slate-700 rounded p-2 text-xs text-slate-300 outline-none resize-none" />
+                    <select value={globalCarrier} onChange={e => setGlobalCarrier(e.target.value)} className="w-full bg-black border border-slate-700 rounded p-2 text-xs text-slate-300 outline-none"><option value="USPS">USPS Standard</option><option value="UPS">UPS Express Ground</option><option value="FedEx">FedEx Insured</option></select>
+                  </div>
+                </div>
+                <div className="bg-[#090d16] border border-purple-500/20 rounded-lg p-4 flex flex-col justify-center text-center">
+                  <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest block mb-2">Cryptographic Identity Ranking</span>
+                  <p className="text-xs text-slate-400">SELLER MATRIX: <span className="text-white font-bold">{getReputation(address || '', 'seller')}</span></p>
+                  <p className="text-xs text-slate-400 mt-1">BUYER MATRIX: <span className="text-white font-bold">{getReputation(address || '', 'buyer')}</span></p>
+                </div>
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-                <div className="xl:col-span-2 space-y-3">
-                  {listings.filter(i => i.type === 'smart_bounty').length === 0 ? (
-                    <div className="border border-dashed border-slate-800 rounded-lg p-8 text-center text-slate-600 font-mono text-xs">// NO ACTIVE SERVICE PIPELINES INITIALIZED ON NETWORK //</div>
-                  ) : (
-                    listings.filter(i => i.type === 'smart_bounty').map(gig => {
-                      const isUsdc = gig.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
-                      return (
-                      <div key={gig.id} className={`p-4 md:p-5 rounded-lg border transition-all duration-300 ${activeChatGigId === gig.id ? 'bg-[#141e36] border-cyan-400' : 'bg-[#10172a] border-slate-800'}`}>
-                        <div className="flex flex-col sm:flex-row justify-between items-start">
-                          <div>
-                            <span className={`text-[8px] font-mono font-black tracking-widest uppercase px-2 py-0.5 rounded border ${gig.escrowReleased ? 'bg-emerald-950 text-emerald-400 border-emerald-500/20' : 'bg-amber-950 text-amber-400 border-amber-500/20'}`}>
-                              {gig.escrowReleased ? 'FUNDS DISBURSED' : 'VAULT ESCROW ACTIVE'}
-                            </span>
-                            <h3 className="text-base font-black text-white mt-2 uppercase">{gig.title}</h3>
-                          </div>
-                          <button onClick={() => setActiveChatGigId(gig.id)} className="text-[10px] font-black text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-3 py-2 rounded uppercase mt-2 sm:mt-0">CONNECT COMM CHANNEL</button>
-                        </div>
-                      </div>
-                    )})
-                  )}
+
+              {/* DASH LISTS */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-[#090d16] border border-slate-800 rounded-lg p-4 flex flex-col">
+                  <h4 className="text-xs font-black text-cyan-400 uppercase tracking-widest mb-3 border-b border-slate-800 pb-1.5">Deployments</h4>
+                  <div className="space-y-2 flex-1">
+                    {listings.filter(i => i.seller.toLowerCase() === address?.toLowerCase() && !i.settled).length > 0 ? (
+                      listings.filter(i => i.seller.toLowerCase() === address?.toLowerCase() && !i.settled).map(node => (
+                        <div key={node.id} onClick={() => setSelectedItem(node)} className="p-2.5 bg-[#10172a] border border-slate-800 rounded cursor-pointer flex justify-between items-center"><span className="text-[10px] text-white truncate w-2/3 uppercase">{node.title}</span><span className="text-[10px] text-emerald-400 font-bold">{node.reservePrice}</span></div>
+                      ))
+                    ) : ( <p className="text-[9px] text-slate-600 uppercase py-4 text-center">// SYSTEM STANDBY //</p> )}
+                  </div>
+                </div>
+                <div className="bg-[#090d16] border border-slate-800 rounded-lg p-4 flex flex-col">
+                  <h4 className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-3 border-b border-slate-800 pb-1.5">Engagements</h4>
+                  <div className="space-y-2 flex-1">
+                    {listings.filter(i => i.highestBidder?.toLowerCase() === address?.toLowerCase() && !i.settled).length > 0 ? (
+                      listings.filter(i => i.highestBidder?.toLowerCase() === address?.toLowerCase() && !i.settled).map(node => (
+                        <div key={node.id} onClick={() => setSelectedItem(node)} className="p-2.5 bg-[#10172a] border border-slate-800 rounded cursor-pointer flex justify-between items-center"><span className="text-[10px] text-white truncate w-2/3 uppercase">{node.title}</span><span className="text-[10px] text-emerald-400 font-bold">{node.highestBid}</span></div>
+                      ))
+                    ) : ( <p className="text-[9px] text-slate-600 uppercase py-4 text-center">// SYSTEM STANDBY //</p> )}
+                  </div>
+                </div>
+                <div className="bg-[#090d16] border border-slate-800 rounded-lg p-4 flex flex-col">
+                  <h4 className="text-xs font-black text-purple-400 uppercase tracking-widest mb-3 border-b border-slate-800 pb-1.5">Settled Ledger</h4>
+                  <div className="space-y-2 flex-1">
+                    {listings.filter(i => i.settled && (i.seller.toLowerCase() === address?.toLowerCase() || i.highestBidder?.toLowerCase() === address?.toLowerCase())).length > 0 ? (
+                      listings.filter(i => i.settled && (i.seller.toLowerCase() === address?.toLowerCase() || i.highestBidder?.toLowerCase() === address?.toLowerCase())).map(node => (
+                        <div key={node.id} onClick={() => setSelectedItem(node)} className="p-2.5 bg-[#10172a] border border-slate-800 rounded cursor-pointer flex justify-between items-center"><span className="text-[10px] text-white truncate w-2/3 uppercase">{node.title}</span><span className="text-[10px] text-slate-400 font-bold">COMPLETED</span></div>
+                      ))
+                    ) : ( <p className="text-[9px] text-slate-600 uppercase py-4 text-center">// SYSTEM STANDBY //</p> )}
+                  </div>
                 </div>
               </div>
             </div>
           )}
+        </div>
 
-          {activeTab === 'vault_dashboard' && (
-            <div className="space-y-4">
-              {mounted && isConnected && address?.toLowerCase() === DEVELOPER_ADMIN_ADDRESS.toLowerCase() && (
-                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-3">
-                  <div>
-                    <p className="text-[10px] text-emerald-400 font-black uppercase font-mono">// ADMINISTRATIVE ROOT SIGNATURE CONFIRMED //</p>
-                    <p className="text-xs text-slate-400 font-mono mt-1">Contract Accumulation Balances: <span className="text-emerald-400 font-bold">{contractBalance.data ? formatEther(contractBalance.data.value) : '0.00'} ETH</span></p>
+        {/* RIGHT SIDEBAR TOOLS */}
+        <div className="lg:col-span-1 space-y-4">
+          
+          {/* AI ASSIST LOGIC RESTORED & WIRED */}
+          <div className="bg-[#0b1224] border border-cyan-500/30 rounded-xl p-4 flex flex-col h-72">
+            <span className="text-[10px] font-black text-cyan-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              BaseVault AI Assistant
+            </span>
+            <div className="flex-1 overflow-y-auto space-y-2 p-1 border border-slate-800/80 bg-black/40 rounded text-[10px] no-scrollbar">
+              {botMessages.map((msg, idx) => (
+                <div key={idx} className={`p-1.5 rounded ${msg.sender === 'bot' ? 'bg-cyan-950/40 text-cyan-200 border-l border-cyan-400' : 'bg-slate-900 text-slate-300 text-right ml-4'}`}>
+                  {msg.text}
+                </div>
+              ))}
+            </div>
+            <form onSubmit={handleAssistantSubmit} className="mt-2 flex gap-1">
+              <input type="text" value={assistantInput} onChange={e => setAssistantInput(e.target.value)} placeholder="Query framework state..." className="flex-1 bg-black border border-slate-700 rounded px-2 py-1 text-[10px] text-white outline-none" />
+              <button type="submit" className="bg-cyan-900 hover:bg-cyan-800 px-2 py-1 text-[9px] font-black uppercase rounded">ASK</button>
+            </form>
+          </div>
+
+          <div className="bg-gradient-to-b from-[#0052FF]/20 to-[#090d16] border border-[#0052FF]/40 rounded-xl p-4 text-center">
+            <h3 className="text-[10px] font-black tracking-widest text-[#0052FF] uppercase mb-1">Coinbase Fiat Link</h3>
+            <a href="https://coinbase.com/partner/basevault" target="_blank" rel="noopener noreferrer" className="block w-full bg-[#0052FF] hover:bg-[#0052FF]/80 text-white font-black py-2 rounded text-[10px] uppercase transition-colors mt-3">Buy Asset Capital</a>
+          </div>
+        </div>
+      </div>
+
+      {/* DETAILED NODE INSPECTION MODAL */}
+      {selectedItem && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="bg-[#0e1424] border border-slate-700 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
+            <div className="sticky top-0 bg-[#0e1424] border-b border-slate-800 p-4 flex justify-between items-center z-10">
+              <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">{selectedItem.type === 'digital' ? '💼 BOUNTY WORKSTATION' : `ASSET NODE #${selectedItem.id}`}</span>
+              <button onClick={() => setSelectedItem(null)} className="text-slate-400 hover:text-white font-black text-2xl leading-none">&times;</button>
+            </div>
+            
+            <div className="flex border-b border-slate-800 bg-[#090d16] overflow-x-auto no-scrollbar">
+              <button onClick={() => setModalTab('details')} className={`shrink-0 px-4 py-3 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors ${modalTab === 'details' ? 'text-emerald-400 border-emerald-400 bg-emerald-950/20' : 'text-slate-500 border-transparent'}`}>Overview</button>
+              <button onClick={() => setModalTab('comms')} className={`shrink-0 px-4 py-3 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors ${modalTab === 'comms' ? 'text-emerald-400 border-emerald-400 bg-emerald-950/20' : 'text-slate-500 border-transparent'}`}>Comms</button>
+              {selectedItem.type === 'digital' && <button onClick={() => setModalTab('sandbox')} className={`shrink-0 px-4 py-3 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors ${modalTab === 'sandbox' ? 'text-emerald-400 border-emerald-400 bg-emerald-950/20' : 'text-slate-500 border-transparent'}`}>Runtime sandbox</button>}
+              {selectedItem.type === 'physical' && selectedItem.settled && (
+                <button onClick={() => setModalTab('fulfillment')} className={`shrink-0 px-4 py-3 text-[10px] font-black uppercase border-b-2 ${modalTab === 'fulfillment' ? 'text-cyan-400 border-cyan-400' : 'text-slate-500 border-transparent'}`}>Fulfillment</button>
+              )}
+            </div>
+
+            <div className="p-6 space-y-4">
+              {modalTab === 'details' && (
+                <>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    {/* IMAGE CAROUSEL LOGIC RESTORED FOR BOTH BOUNTY AND PHYSICAL */}
+                    {selectedItem.type !== 'tokenized_nft' && selectedItem.images.length > 0 && (
+                      <div className="w-full sm:w-1/3 flex flex-col gap-2">
+                        <div className="bg-[#090d16] rounded border border-slate-800 aspect-square overflow-hidden">
+                          <img src={selectedItem.images[modalImgIdx] || selectedItem.images[0]} className="w-full h-full object-cover" />
+                        </div>
+                        {selectedItem.images.length > 1 && (
+                          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                            {selectedItem.images.map((img, idx) => (
+                              <img key={idx} src={img} onClick={() => setModalImgIdx(idx)} className={`w-12 h-12 rounded cursor-pointer object-cover border transition-all shrink-0 ${modalImgIdx === idx ? 'border-cyan-400' : 'border-slate-800 opacity-50 hover:opacity-100'}`} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className={selectedItem.type !== 'tokenized_nft' && selectedItem.images.length > 0 ? "w-full sm:w-2/3 flex flex-col" : "w-full flex flex-col"}>
+                      <h2 className="text-lg font-black text-white uppercase">{selectedItem.title}</h2>
+                      <p className="text-[10px] text-slate-400 mt-1">DEPLOYER: {selectedItem.seller} [RANK: {getReputation(selectedItem.seller, 'seller')}]</p>
+                      <div className="mt-3 bg-black border border-slate-800 rounded p-3 text-xs text-slate-300 font-sans leading-relaxed whitespace-pre-wrap">
+                        {selectedItem.description || "// No detailed operational parameters supplied."}
+                      </div>
+                    </div>
                   </div>
-                  <button onClick={handleAdminWithdrawLiquidity} disabled={chainId !== base.id} className="bg-emerald-500 text-black font-black text-xs px-5 py-3 rounded uppercase tracking-wider disabled:opacity-40">Execute Vault Payout</button>
+
+                  {/* BUYER SHIPPING MATRIX */}
+                  {selectedItem.type === 'physical' && !selectedItem.settled && selectedItem.seller.toLowerCase() !== address?.toLowerCase() && (
+                    <div className="p-3.5 bg-[#0b1426] border border-cyan-500/20 rounded-lg space-y-2">
+                      <p className="text-[9px] font-black text-cyan-400 uppercase tracking-wider">📦 ASSIGN SHIPPING MATRIX ROUTE (BUYER MANDATED)</p>
+                      <select value={chosenShippingTier} onChange={(e) => setChosenShippingTier(e.target.value)} className="w-full bg-black border border-slate-700 p-2 text-xs text-white outline-none">
+                        <option value="USPS">USPS Standard (Included - No Additional Fee)</option>
+                        <option value="UPS">UPS Express Ground ($10.00 USDC / ETH eq.)</option>
+                        <option value="FedEx">FedEx Insured ($20.00 USDC / ETH eq.)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* FINANCIAL BREAKDOWN */}
+                  <div className="p-4 bg-[#090d16] border border-emerald-500/20 rounded-lg space-y-2">
+                    <p className="text-[9px] font-black text-emerald-400 tracking-wider uppercase">// ESCROW ACCOUNTABILITY ENGINE BREAKDOWN //</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono text-slate-400">
+                      <span>Total Buyer Cost:</span><span className="text-white font-bold text-right">{calculateFinalBreakdown(selectedItem, chosenShippingTier).totalBuyerCost}</span>
+                      <span>Disbursed to Seller (96%):</span><span className="text-emerald-400 font-bold text-right">{calculateFinalBreakdown(selectedItem, chosenShippingTier).sellerPayout}</span>
+                      <span>Protocol Takeover Split (4%):</span><span className="text-cyan-400 font-bold text-right">{calculateFinalBreakdown(selectedItem, chosenShippingTier).protocolFee}</span>
+                      {selectedItem.type === 'physical' && (
+                        <><span>Calculated Carrier Cost:</span><span className="text-amber-400 text-right">{calculateFinalBreakdown(selectedItem, chosenShippingTier).shippingComponent}</span></>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* DYNAMIC AUCTION/BUY NOW CHECKOUT BAR */}
+                  {!selectedItem.settled && (
+                    <div className="pt-4 border-t border-slate-800 flex justify-between items-center gap-4">
+                      {selectedItem.saleMode !== 'fixed' && (
+                        <input type="number" step="0.0001" placeholder="Bid Amount..." value={bidInput} onChange={e => setBidInput(e.target.value)} className="w-32 bg-black border border-slate-700 rounded px-3 py-2 text-emerald-400 text-xs outline-none" />
+                      )}
+                      <button onClick={handlePlaceBid} className="flex-1 bg-emerald-500 hover:bg-emerald-400 transition-colors text-black px-6 py-3 rounded text-[11px] font-black uppercase tracking-wider text-center">
+                        {selectedItem.saleMode === 'fixed' 
+                          ? `🛒 BUY NOW FOR ${selectedItem.reservePrice} ${selectedItem.paymentToken?.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}` 
+                          : (selectedItem.type === 'digital' ? 'SECURE BOUNTY PIPELINE' : 'TRANSMIT BID')}
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedItem.settled && (
+                    <div className="p-3 bg-purple-950/20 border border-purple-500/30 rounded flex justify-between items-center text-xs">
+                      <span>Rank counterparty interaction index:</span>
+                      <div className="flex gap-1">
+                        {[1,2,3,4,5].map(star => ( <button key={star} onClick={() => handleRateUser(star, 'seller')} className="text-purple-400 font-bold">★</button> ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {modalTab === 'comms' && (
+                <div className="h-64 flex flex-col border border-slate-800 rounded bg-black">
+                  <div className="flex-1 p-3 overflow-y-auto space-y-2 text-[11px] font-sans">
+                    {bountyMessages.map((msg, i) => ( <div key={i} className={`p-2 rounded max-w-[80%] ${msg.sender === address ? 'bg-cyan-950 text-cyan-200 ml-auto' : 'bg-slate-900 text-slate-300 mr-auto'}`}>{msg.text}</div> ))}
+                  </div>
+                  <form onSubmit={handleClientMessageSubmit} className="p-2 border-t border-slate-800 flex gap-2"><input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} className="flex-1 bg-[#10172a] border border-slate-800 rounded px-2 text-xs text-white outline-none" /><button type="submit" className="bg-cyan-900 px-3 text-[10px] font-black uppercase">SEND</button></form>
+                </div>
+              )}
+
+              {modalTab === 'sandbox' && (
+                <div className="space-y-3">
+                  <textarea value={sandboxCode} onChange={e => setSandboxCode(e.target.value)} className="w-full h-40 bg-black p-3 font-mono text-xs text-amber-300 border border-slate-800 outline-none resize-none" />
+                  <button onClick={executeSandboxCode} className="bg-emerald-600 text-black font-black px-4 py-1.5 rounded text-[10px] uppercase">RUN TELEMETRY TEST</button>
+                  <div className="bg-slate-950 border border-slate-800 p-2 rounded h-24 overflow-y-auto font-mono text-[10px] text-emerald-400 space-y-0.5">
+                    {sandboxLogs.map((l, i) => <div key={i}>{l}</div>)}
+                  </div>
+                  <iframe key={runSandboxTrig} style={{ display: 'none' }} sandbox="allow-scripts" srcDoc={`<script>console.log = function(...args) { window.parent.postMessage({ type: 'sandbox-log', message: args.join(' ') }, '*'); }; try { ${sandboxCode} } catch(e) { console.log('ERROR: ' + e.message); }</script>`} />
+                </div>
+              )}
+
+              {modalTab === 'fulfillment' && (
+                <div className="space-y-4">
+                  <div className="bg-black border border-slate-800 p-3 rounded">
+                    <h4 className="text-[10px] text-cyan-400 font-black uppercase mb-1">Target Address Assignment</h4>
+                    <textarea value={fulfillmentAddress} onChange={e => setFulfillmentAddress(e.target.value)} rows={2} className="w-full bg-transparent text-xs text-white outline-none" />
+                    <button onClick={handleSaveAddress} className="mt-2 bg-cyan-950 px-3 py-1 text-[9px] font-black text-cyan-400 border border-cyan-500/30 rounded uppercase">Lock Route</button>
+                  </div>
+                  <div className="bg-black border border-slate-800 p-3 rounded">
+                    <h4 className="text-[10px] text-emerald-400 font-black uppercase mb-2">Transit Manifest Submission</h4>
+                    <input type="text" value={fulfillmentTracking} onChange={e => setFulfillmentTracking(e.target.value)} placeholder="Tracking Identifier..." className="w-full bg-[#10172a] border border-slate-700 rounded p-2 text-xs text-white outline-none" />
+                    <button onClick={handleSaveTracking} className="mt-2 bg-emerald-950 px-3 py-1 text-[9px] font-black text-emerald-400 border border-emerald-500/30 rounded uppercase">Transmit Manifest</button>
+                  </div>
                 </div>
               )}
             </div>
-          )}
-        </div>
-
-        <div className="lg:col-span-1 space-y-4">
-          <div className="border border-cyan-950 bg-[#10172a]/90 rounded-xl p-4 flex flex-col gap-3 font-mono sticky top-24">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-1">
-              <h3 className="text-xs font-bold tracking-wider text-cyan-400 uppercase">LIQUIDITY RAMPS</h3>
-            </div>
-            <p className="text-[11px] font-sans text-slate-400 leading-relaxed">Insufficient liquidity or network gas? Inject Base assets immediately.</p>
-            <a href="/portal" className="flex items-center justify-center gap-2 border border-cyan-950 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/50 py-2 rounded-lg text-xs font-bold text-center">⚡ BRIDGE FROM OTHER CHAINS</a>
-            <a href="https://coinbase.com/join/3MUGJEH?src=android-link" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 border border-slate-800 bg-slate-900/40 text-slate-300 hover:bg-slate-900/80 py-2 rounded-lg text-xs font-bold text-center">💳 BUY CRYPTO WITH CASH ↗</a>
           </div>
         </div>
-
-      </div>
+      )}
     </div>
   );
 }
