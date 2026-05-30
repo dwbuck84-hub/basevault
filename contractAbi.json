@@ -1,0 +1,123 @@
+[
+  {
+    "inputs": [],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"},
+      {"indexed": true, "internalType": "address", "name": "buyer", "type": "address"}
+    ],
+    "name": "EscrowLocked",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"},
+      {"indexed": true, "internalType": "address", "name": "seller", "type": "address"},
+      {"indexed": true, "internalType": "address", "name": "buyer", "type": "address"}
+    ],
+    "name": "FulfillmentConfirmed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"}
+    ],
+    "name": "ItemCanceled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"},
+      {"indexed": true, "internalType": "address", "name": "seller", "type": "address"},
+      {"notIndexed": false, "internalType": "uint256", "name": "price", "type": "uint256"},
+      {"notIndexed": false, "internalType": "address", "name": "tokenAddress", "type": "address"},
+      {"notIndexed": false, "internalType": "bool", "name": "isPhysical", "type": "bool"}
+    ],
+    "name": "ItemListed",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "NATIVE_ETH",
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "PROTOCOL_FEE_PERCENT",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256", "name": "_id", "type": "uint256"}],
+    "name": "cancelListing",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256", "name": "_id", "type": "uint256"}],
+    "name": "confirmFulfillment",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getTotalItems",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "name": "items",
+    "outputs": [
+      {"internalType": "uint256", "name": "id", "type": "uint256"},
+      {"internalType": "address payable", "name": "seller", "type": "address"},
+      {"internalType": "address", "name": "buyer", "type": "address"},
+      {"internalType": "address", "name": "tokenAddress", "type": "address"},
+      {"internalType": "string", "name": "metadataURI", "type": "string"},
+      {"internalType": "uint256", "name": "price", "type": "uint256"},
+      {"internalType": "enum BaseVaultV5.ItemStatus", "name": "status", "type": "uint8"},
+      {"internalType": "bool", "name": "isPhysical", "type": "bool"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"internalType": "string", "name": "_metadataURI", "type": "string"},
+      {"internalType": "uint256", "name": "_price", "type": "uint256"},
+      {"internalType": "address", "name": "_tokenAddress", "type": "address"},
+      {"internalType": "bool", "name": "_isPhysical", "type": "bool"}
+    ],
+    "name": "listItem",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "protocolOwner",
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256", "name": "_id", "type": "uint256"}],
+    "name": "purchaseItem",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  }
+]
