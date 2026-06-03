@@ -216,6 +216,7 @@ function MarketplaceContent() {
   const verifyNftOwnership = () => { setIsVerifyingNft(true); setTimeout(() => { setIsNftVerified(true); setIsVerifyingNft(false); alert("✅ CRYPTOGRAPHIC VERIFICATION COMPLETE."); }, 1000); };
 
   const [activeTab, setActiveTab] = useState<'browse' | 'list' | 'vault_dashboard' | 'terms'>('browse');
+  const [sortOrder, setSortOrder] = useState('newest');
   const [browseSubTab, setBrowseSubTab] = useState<'all' | 'digital' | 'physical' | 'tokenized_nft'>('all');
   
   // Filter & Search Engine State
