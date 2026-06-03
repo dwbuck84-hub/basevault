@@ -634,10 +634,12 @@ function MarketplaceContent() {
               {/* GRID DISPATCH MATRIX WITH DOOM SCROLL MAPPING */}
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" ref={scrollRef}>
                 {[...visiblySlicedListings].sort((a, b) => {
-                  if (sortOrder === 'price_high') return Number(b.highestBid > 0 ? b.highestBid : b.reservePrice) - Number(a.highestBid > 0 ? a.highestBid : a.reservePrice);
-                  if (sortOrder === 'price_low') return Number(a.highestBid > 0 ? a.highestBid : a.reservePrice) - Number(b.highestBid > 0 ? b.highestBid : b.reservePrice);
-                  if (sortOrder === 'oldest') return Number(a.id) - Number(b.id);
-                  return Number(b.id) - Number(a.id); // newest default
+                  const valA = Number(a.highestBid) > 0 ? Number(a.highestBid) : Number(a.reservePrice);
+                  const valB = Number(b.highestBid) > 0 ? Number(b.highestBid) : Number(b.reservePrice);
+                  if (sortOrder === 'price_high') return valB - valA;
+                  if (sortOrder === 'price_low') return valA - valB;
+                  if (sortOrder === 'oldest') return Number(a.id || 0) - Number(b.id || 0);
+                  return Number(b.id || 0) - Number(a.id || 0); // newest default
                 }).map(item => (
                   <div key={item.id} onClick={() => setSelectedItem(item)} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer flex flex-col justify-between shadow-md transition-all">
                     <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
@@ -714,7 +716,7 @@ function MarketplaceContent() {
                 <div>
                   <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Format Architecture</label>
                   <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => setSaleMode('auction')} className={`py-2.5 rounded font-black uppercase text-[10px] border transition-all ${saleMode === 'auction' ? 'bg-cyan-950 border-cyan-400 text-cyan-300' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🔨 Open Auction</button>
+                    {(formType as string) !== 'digital' && (<button type="button" onClick={() => setSaleMode('auction')} className={`py-2.5 rounded font-black uppercase text-[10px] border transition-all ${saleMode === 'auction' ? 'bg-cyan-950 border-cyan-400 text-cyan-300' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🔨 Open Auction</button>)}
                     <button type="button" onClick={() => setSaleMode('fixed')} className={`py-2.5 rounded font-black uppercase text-[10px] border transition-all ${saleMode === 'fixed' ? 'bg-emerald-950 border-emerald-400 text-emerald-300' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🛒 Fixed Price / Buy Now</button>
                   </div>
                 </div>
@@ -746,6 +748,18 @@ function MarketplaceContent() {
                   </div>
                 </div>
 
+                {saleMode === 'auction' && (
+                  <div className="mt-4 mb-2 w-full col-span-full">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Auction Duration (Time on Market)</label>
+                    <select value={formDuration} onChange={(e) => setFormDuration(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-emerald-400 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer">
+                      <option value="86400">1 Day (Rapid)</option>
+                      <option value="259200">3 Days (Standard)</option>
+                      <option value="604800">7 Days (Extended)</option>
+                      <option value="1209600">14 Days (Long)</option>
+                      <option value="2592000">30 Days (Maximum)</option>
+                    </select>
+                  </div>
+                )}
                 {/* FILE UPLOAD & AI APPRAISER RESTORED FOR BOUNTIES & PHYSICAL */}
                 {formType !== 'tokenized_nft' && (
                   <div className="p-3 bg-[#0d1527] border border-slate-800 rounded space-y-3">
