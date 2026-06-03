@@ -267,6 +267,25 @@ function MarketplaceContent() {
   const [pendingEthRefund, setPendingEthRefund] = useState('0');
   const [pendingUsdcRefund, setPendingUsdcRefund] = useState('0');
   const [mounted, setMounted] = useState(false);
+
+  // LIVE AUCTION TIMER ENGINE
+  const [auctionTick, setAuctionTick] = useState(Math.floor(Date.now() / 1000));
+  
+  useEffect(() => {
+    const timer = setInterval(() => setAuctionTick(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTimeLeft = (endTime: any) => {
+    if (!endTime) return '';
+    const diff = Number(endTime) - auctionTick;
+    if (diff <= 0) return 'CLOSED';
+    const d = Math.floor(diff / 86400);
+    const h = Math.floor((diff % 86400) / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = diff % 60;
+    return `${d > 0 ? d + 'd ' : ''}${h}h ${m}m ${s}s`;
+  };
   const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
   
   // Doom Scroll State
@@ -645,7 +664,7 @@ function MarketplaceContent() {
                     <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
                       {item.images.length > 0 ? <img src={item.images[0]} className="w-full h-full object-cover opacity-90" /> : <div className="text-cyan-500/30 text-5xl font-black w-full h-full flex items-center justify-center bg-cyan-950/20">{`< / >`}</div>}
                       <span className="absolute top-2 right-2 bg-black/80 px-2 py-1 rounded border border-slate-700 text-[9px] font-black text-amber-400 tracking-wider flex items-center gap-1">
-                        {item.saleMode === 'fixed' ? '🛒 BUY NOW' : '🔨 AUCTION'}
+                        {item.saleMode === 'fixed' ? '🛒 BUY NOW' : ((item as any).auction_end_time ? (Number((item as any).auction_end_time) > auctionTick ? `⏳ ${formatTimeLeft((item as any).auction_end_time)}` : '🛑 CLOSED') : '🔨 AUCTION')}
                       </span>
                     </div>
                     <div className="p-4 flex-1 flex flex-col justify-between">
@@ -964,7 +983,12 @@ function MarketplaceContent() {
                   {/* DYNAMIC AUCTION/BUY NOW CHECKOUT BAR */}
                   {!selectedItem.settled && (
                     <div className="pt-4 border-t border-slate-800 flex justify-between items-center gap-4">
-                      {selectedItem.saleMode !== 'fixed' && (
+                      {selectedItem.saleMode === 'auction' && Number(selectedItem.highestBid) > 0 && (
+                          <div className="w-full text-[10px] text-amber-400 font-black mb-2 text-right tracking-wider">
+                            TOP BIDDER REPUTATION: ⭐ {(selectedItem as any).buyer_rating ? Number((selectedItem as any).buyer_rating).toFixed(1) : 'NEW'}
+                          </div>
+                        )}
+                        {selectedItem.saleMode !== 'fixed' && (
                         <input type="number" step="0.0001" placeholder="Bid Amount..." value={bidInput} onChange={e => setBidInput(e.target.value)} className="w-32 bg-black border border-slate-700 rounded px-3 py-2 text-emerald-400 text-xs outline-none" />
                       )}
                       <button onClick={handlePlaceBid} className="flex-1 bg-emerald-500 hover:bg-emerald-400 transition-colors text-black px-6 py-3 rounded text-[11px] font-black uppercase tracking-wider text-center">
