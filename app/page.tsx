@@ -613,9 +613,32 @@ function MarketplaceContent() {
                 </div>
               </div>
 
+              {/* INJECTED MASTER SORT TABS */}
+              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-800 pb-4 w-full">
+                <span className="text-[10px] font-black text-slate-500 uppercase flex items-center mr-2">Sort Matrix:</span>
+                {[
+                  { id: 'newest', label: 'Newest First' }, 
+                  { id: 'oldest', label: 'Oldest First' }, 
+                  { id: 'price_high', label: 'Price: High to Low' }, 
+                  { id: 'price_low', label: 'Price: Low to High' }
+                ].map(sort => (
+                  <button
+                    key={sort.id}
+                    onClick={() => setSortOrder(sort.id)}
+                    className={`px-3 py-1.5 text-[10px] font-black uppercase transition-all rounded ${sortOrder === sort.id ? 'bg-cyan-950 text-cyan-400 border border-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.3)]' : 'bg-black text-slate-400 border border-slate-800 hover:border-cyan-500/50'}`}
+                  >
+                    {sort.label}
+                  </button>
+                ))}
+              </div>
               {/* GRID DISPATCH MATRIX WITH DOOM SCROLL MAPPING */}
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" ref={scrollRef}>
-                {visiblySlicedListings.map(item => (
+                {[...visiblySlicedListings].sort((a, b) => {
+                  if (sortOrder === 'price_high') return Number(b.highestBid > 0 ? b.highestBid : b.reservePrice) - Number(a.highestBid > 0 ? a.highestBid : a.reservePrice);
+                  if (sortOrder === 'price_low') return Number(a.highestBid > 0 ? a.highestBid : a.reservePrice) - Number(b.highestBid > 0 ? b.highestBid : b.reservePrice);
+                  if (sortOrder === 'oldest') return Number(a.id) - Number(b.id);
+                  return Number(b.id) - Number(a.id); // newest default
+                }).map(item => (
                   <div key={item.id} onClick={() => setSelectedItem(item)} className="bg-[#10172a] border border-slate-800 hover:border-cyan-400 rounded-lg overflow-hidden cursor-pointer flex flex-col justify-between shadow-md transition-all">
                     <div className="relative bg-[#090d16] aspect-video flex items-center justify-center border-b border-slate-800 overflow-hidden">
                       {item.images.length > 0 ? <img src={item.images[0]} className="w-full h-full object-cover opacity-90" /> : <div className="text-cyan-500/30 text-5xl font-black w-full h-full flex items-center justify-center bg-cyan-950/20">{`< / >`}</div>}
@@ -687,6 +710,7 @@ function MarketplaceContent() {
                 </div>
 
                 {/* SALE MODE TOGGLE */}
+                {formType !== 'digital' && (
                 <div>
                   <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Format Architecture</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -694,6 +718,7 @@ function MarketplaceContent() {
                     <button type="button" onClick={() => setSaleMode('fixed')} className={`py-2.5 rounded font-black uppercase text-[10px] border transition-all ${saleMode === 'fixed' ? 'bg-emerald-950 border-emerald-400 text-emerald-300' : 'bg-[#090d16] border-slate-800 text-slate-500'}`}>🛒 Fixed Price / Buy Now</button>
                   </div>
                 </div>
+                )}
 
                 {formType === 'physical' && (
                   <div className="p-3 bg-[#090d16] border border-cyan-500/20 rounded flex justify-between items-center">
