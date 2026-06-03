@@ -1,4 +1,5 @@
 'use client';
+import { ethers } from 'ethers';
 
 export const dynamic = 'force-dynamic';
 
