@@ -55,9 +55,48 @@ function MarketplaceContent() {
   const handleClientMessageSubmit = (e: React.FormEvent) => { e.preventDefault(); if(chatInput.trim() && address) { setBountyMessages(p => [...p, { sender: address, text: chatInput, timestamp: Date.now() }]); setChatInput(''); } };
   const executeSandboxCode = () => { setSandboxLogs(['// PROCESSING LOGISTICS COMPILATION...']); setRunSandboxTrig(prev => prev + 1); };
   const handleSaveAddress = async () => { if(selectedItem) { await supabase.from(DB_TABLE).update({ shipping_address: fulfillmentAddress }).eq('id', selectedItem.id); alert("✅ SECURE DESTINATION ROUTED."); if (typeof syncV5Ledger === 'function') syncV5Ledger(); } };
-  const handleSaveTracking = async () => { if(selectedItem && shippingLabelUrl) { await supabase.from(DB_TABLE).update({ tracking_info: fulfillmentTracking, shipping_label_url: shippingLabelUrl }).eq('id', selectedItem.id); alert("✅ TRANSIT BROADCAST LIVE."); if (typeof syncV5Ledger === 'function') syncV5Ledger(); } };
+  const handleSaveTracking = async () => {
+    if(selectedItem && shippingLabelUrl) {
+      try {
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'markShipped', args: [BigInt(selectedItem.id)] });
+        await supabase.from(DB_TABLE).update({ tracking_info: fulfillmentTracking, shipping_label_url: shippingLabelUrl }).eq('id', selectedItem.id);
+        alert("✅ TRANSIT BROADCAST LIVE & BLOCKCHAIN UPDATED.");
+        if (typeof syncV5Ledger === 'function') syncV5Ledger();
+      } catch(e: any) { alert("❌ Web3 Error: " + (e.reason || e.message)); }
+    }
+  };
 
-  // V5.2 Restored Reputation Engine
+  // 🔥 STRIKE 5: ESCROW LIFECYCLE CONTROLS 🔥
+  const executeConfirmDelivery = async (id: number) => {
+    try {
+      await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'confirmDelivery', args: [BigInt(id)] });
+      alert("✅ ESCROW RELEASED: Funds have been disbursed to the seller.");
+      if (typeof syncV5Ledger === 'function') syncV5Ledger();
+    } catch (e: any) { alert("❌ Error: " + (e.reason || e.message)); }
+  };
+
+  const executeFileDispute = async (id: number) => {
+    try {
+      await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'fileDispute', args: [BigInt(id)] });
+      alert("⚠️ DISPUTE FILED: Escrow is locked pending admin review.");
+      if (typeof syncV5Ledger === 'function') syncV5Ledger();
+    } catch (e: any) { alert("❌ Error: " + (e.reason || e.message)); }
+  };
+
+  // 🔥 STRIKE 6: THE RECALL (CANCEL LISTING) 🔥
+  const executeCancelListing = async (id: number, isUSDC: boolean) => {
+    try {
+      if (isUSDC) {
+        await writeContractAsync({ address: USDC_ADDRESS as `0x${string}`, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_V5_ADDRESS, BigInt(2000000)] });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'cancelListing', args: [BigInt(id)], value: BigInt(0) });
+      } else {
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'cancelListing', args: [BigInt(id)], value: parseEther("0.002") });
+      }
+      alert("✅ LISTING CANCELLED: Item removed and fee collected.");
+      if (typeof syncV5Ledger === 'function') syncV5Ledger();
+    } catch (e: any) { alert("❌ Error: " + (e.reason || e.message)); }
+  };
+
   const handleRateUser = async (stars: number, role: 'seller' | 'buyer') => { 
     if(selectedItem) { 
       await supabase.from(DB_TABLE).update(role === 'seller' ? { seller_rating: stars } : { buyer_rating: stars }).eq('id', selectedItem.id); 
