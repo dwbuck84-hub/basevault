@@ -35,6 +35,7 @@ const MARKETPLACE_V5_ABI = [
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"fileDispute","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"autoReleaseEscrow","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"cancelListing","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"_token","type":"address"}],"name":"claimRefund","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"pendingRefunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ];
 
@@ -108,6 +109,24 @@ function MarketplaceContent() {
   };
 
   // V5.2 Restored Purchase Engine
+  
+  // 🔥 STRIKE 10: THE REFUND VAULT 🔥
+  const executeClaimRefund = async (isUSDC: boolean) => {
+    try {
+      const tokenAddress = isUSDC ? USDC_ADDRESS : ETH_ADDRESS;
+      await writeContractAsync({ 
+        address: VAULT_V5_ADDRESS as `0x${string}`, 
+        abi: MARKETPLACE_V5_ABI, 
+        functionName: 'claimRefund', 
+        args: [tokenAddress] 
+      });
+      alert("✅ FUNDS SECURED: Refund successfully pulled to your wallet.");
+      if (typeof syncV5Ledger === 'function') syncV5Ledger();
+    } catch (e: any) { 
+      alert("❌ Claim Error: " + (e.reason || e.message)); 
+    }
+  };
+
   const handlePlaceBid = async () => {
     if (!selectedItem) return;
     const finalAmountToUse = selectedItem.saleMode === 'fixed' ? selectedItem.reservePrice : bidInput;
