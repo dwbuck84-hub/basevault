@@ -15,7 +15,8 @@ import { useAccount, useConnect, useDisconnect, useWriteContract } from 'wagmi';
 // ==========================================
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; 
 const ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
-const VAULT_V5_ADDRESS = "0x8714D5f904a9D96db101CE03287Dd161BAD90ac5"; 
+const NATIVE_ETH_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+const VAULT_V5_ADDRESS = "0x19B0a1d53Ff248B60f33e8E017c520B340201C3d"; 
 const DB_TABLE = "listings"; // Wired directly to your backend
 
 const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
@@ -407,16 +408,10 @@ function MarketplaceContent() {
 
   const calculateListingFee = () => {
     const parsedPrice = parseFloat(formReservePrice) || 0;
-    if (formType === 'digital' || formType === 'tokenized_nft') {
-      return selectedCurrency === 'ETH' ? '0.0020 ETH' : `$${(0.002 * ethUsdRate).toFixed(2)} USDC`;
-    }
-    const priceInUsd = selectedCurrency === 'ETH' ? parsedPrice * ethUsdRate : parsedPrice;
-    if (priceInUsd <= 500) {
-      return selectedCurrency === 'ETH' ? '0.0015 ETH' : `$${(0.0015 * ethUsdRate).toFixed(2)} USDC`;
-    } else {
-      const percentageFee = parsedPrice * 0.015;
-      return selectedCurrency === 'ETH' ? `${percentageFee.toFixed(5)} ETH` : `$${percentageFee.toFixed(2)} USDC`;
-    }
+    const percentageFee = parsedPrice * 0.015;
+    return selectedCurrency === 'ETH' 
+      ? `${percentageFee.toFixed(5)} ETH` 
+      : `\$${percentageFee.toFixed(2)} USDC`;
   };
 
   const getShippingCost = (tier: string, isUsdc: boolean) => {
@@ -513,16 +508,16 @@ function MarketplaceContent() {
       const paymentToken = isUsdc ? USDC_ADDRESS : ETH_ADDRESS;
       
       let assetTypeNum = 0;
-      if (formType === 'digital') assetTypeNum = 1;
-      if (formType === 'tokenized_nft') assetTypeNum = 2;
+      if (formType === 'tokenized_nft') assetTypeNum = 1; // 1 = NFT
+      if (formType === 'digital') assetTypeNum = 2; // 2 = Bounty
       
       let feeToSend = BigInt(0);
       if (!isUsdc) {
-        feeToSend = assetTypeNum === 0 ? parseEther("0.0015") : parseEther("0.002");
+// [REMOVED 0.002 FEE OVERRIDE]
       }
       
       const durationDays = Math.max(1, Math.floor(parseInt(formDuration) / 86400));
-      const nftAddress = formType === 'tokenized_nft' ? nftContractAddress : ETH_ADDRESS;
+      const nftAddress = formType === 'tokenized_nft' ? nftContractAddress : VAULT_V5_ADDRESS;
       const tId = formType === 'tokenized_nft' ? BigInt(nftTokenId || 0) : BigInt(0);
 
       // Pre-fetch the ID the contract will assign
@@ -538,8 +533,8 @@ function MarketplaceContent() {
         address: VAULT_V5_ADDRESS as `0x${string}`,
         abi: MARKETPLACE_V5_ABI,
         functionName: 'listAsset',
-        args: [parsedPrice, paymentToken, assetTypeNum, nftAddress, tId, BigInt(durationDays)],
-        value: feeToSend
+        args: [parsedPrice, paymentToken, assetTypeNum, (assetTypeNum === 1 && nftAddress) ? nftAddress : "0x0000000000000000000000000000000000000000", (assetTypeNum === 1 && tId) ? tId : 0, BigInt(durationDays)],
+        value: isUsdc ? BigInt(0) : (parsedPrice * BigInt(15)) / BigInt(1000)
       });
 
       console.log("On-chain transmission complete. Writing to decentralized matrix...");
@@ -744,7 +739,7 @@ function MarketplaceContent() {
               
               <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg text-[10px] text-slate-300 space-y-1.5">
                 <p className="font-black text-white uppercase mb-2">📊 Transparent Protocol Fee Schedule</p>
-                <p>• <span className="font-bold text-white">Listing Matrix:</span> 0.0015 ETH (or 1.5% if target &gt; $500) for Physical nodes. 0.002 ETH flat for Bounties/NFTs.</p>
+<p>• <span className="font-bold text-white">Listing Matrix:</span> 1.5% universal listing fee for all assets.</p>
                 <p>• <span className="font-bold text-white">Settlement Split:</span> 4% automated protocol takeover / 96% distributed directly to Seller Node.</p>
               </div>
 
