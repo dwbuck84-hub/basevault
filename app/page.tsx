@@ -43,7 +43,7 @@ const PHYSICAL_CATEGORIES = ["Electronics & Hardware", "Collectibles & Cards", "
 const BOUNTY_CATEGORIES = ["Software Development", "Digital Art & Design", "Marketing & Copywriting", "Smart Contract Auditing", "Video Editing", "Translation Services", "Technical Writing", "UI/UX Design", "Cyber Security"];
 
 interface AuctionListing {
-  id: string; type: 'digital' | 'physical' | 'tokenized_nft'; title: string; category: string; description: string; images: string[]; seller: string; highestBidder: string; reservePrice: string; highestBid: string; endTime: number; paymentToken: string; settled: boolean; nftContract?: string; nftTokenId?: string; shippingAddress?: string; trackingInfo?: string; shippingLabelUrl?: string; sellerRating?: number; buyerRating?: number; selectedShippingOption?: string; premiumShipping?: boolean; saleMode?: 'auction' | 'fixed';
+  id: string; contract_item_id?: number; type: 'digital' | 'physical' | 'tokenized_nft'; title: string; category: string; description: string; images: string[]; seller: string; highestBidder: string; reservePrice: string; highestBid: string; endTime: number; paymentToken: string; settled: boolean; nftContract?: string; nftTokenId?: string; shippingAddress?: string; trackingInfo?: string; shippingLabelUrl?: string; sellerRating?: number; buyerRating?: number; selectedShippingOption?: string; premiumShipping?: boolean; saleMode?: 'auction' | 'fixed';
 }
 
 export default function Home() { return <Suspense fallback={<div className="min-h-screen bg-[#0a0f1d] text-slate-400 p-6 font-mono">// INITIALIZING V5 TERMINAL... //</div>}><MarketplaceContent /></Suspense>; }
@@ -60,7 +60,7 @@ function MarketplaceContent() {
   const handleSaveTracking = async () => {
     if(selectedItem && shippingLabelUrl) {
       try {
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'markShipped', args: [BigInt(selectedItem.id)] });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'markShipped', args: [BigInt(selectedItem.contract_item_id || 0)] });
         await supabase.from(DB_TABLE).update({ tracking_info: fulfillmentTracking, shipping_label_url: shippingLabelUrl }).eq('id', selectedItem.id);
         alert("✅ TRANSIT BROADCAST LIVE & BLOCKCHAIN UPDATED.");
         if (typeof syncV5Ledger === 'function') syncV5Ledger();
@@ -141,10 +141,10 @@ function MarketplaceContent() {
         // Step 1: Approve USDC router
         await writeContractAsync({ address: USDC_ADDRESS as `0x${string}`, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_V5_ADDRESS, bidWei] });
         // Step 2: Lock into Matrix Escrow
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.id)] : [BigInt(selectedItem.id), bidWei] });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.contract_item_id || 0)] : [BigInt(selectedItem.contract_item_id || 0), bidWei] });
       } else {
         // Native ETH instant routing
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.id)] : [BigInt(selectedItem.id), bidWei], value: bidWei });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.contract_item_id || 0)] : [BigInt(selectedItem.contract_item_id || 0), bidWei], value: bidWei });
       }
       
       if (selectedItem.type === 'physical') {
@@ -525,7 +525,15 @@ function MarketplaceContent() {
       const nftAddress = formType === 'tokenized_nft' ? nftContractAddress : ETH_ADDRESS;
       const tId = formType === 'tokenized_nft' ? BigInt(nftTokenId || 0) : BigInt(0);
 
-      console.log("Transmitting Listing to Base Mainnet...");
+      // Pre-fetch the ID the contract will assign
+      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const nextId = await publicClient.readContract({
+        address: VAULT_V5_ADDRESS as `0x${string}`,
+        abi: MARKETPLACE_V5_ABI,
+        functionName: 'nextListingId'
+      }) as bigint;
+
+      console.log("Transmitting Listing to Base Mainnet (ID: " + nextId + ")...");
       await writeContractAsync({
         address: VAULT_V5_ADDRESS as `0x${string}`,
         abi: MARKETPLACE_V5_ABI,
@@ -549,7 +557,8 @@ function MarketplaceContent() {
         status: 0,
         images: uploadedImageUrls,
         nftContract: nftAddress,
-        tokenId: Number(tId)
+        tokenId: Number(tId),
+        contract_item_id: Number(nextId)
       };
       
       await supabase.from(DB_TABLE).insert([dbRecord]);
@@ -1083,9 +1092,9 @@ function MarketplaceContent() {
                     <input type="text" value={fulfillmentTracking} onChange={e => setFulfillmentTracking(e.target.value)} placeholder="Tracking Identifier..." className="w-full bg-[#10172a] border border-slate-700 rounded p-2 text-xs text-white outline-none" />
                     <button onClick={handleSaveTracking} className="mt-2 bg-emerald-950 px-3 py-1 text-[9px] font-black text-emerald-400 border border-emerald-500/30 rounded uppercase">Transmit Manifest</button>
                     <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap gap-2">
-                      <button onClick={() => executeConfirmDelivery(Number(selectedItem.id))} className="bg-emerald-950 px-3 py-1 text-[9px] font-black text-emerald-400 border border-emerald-500/30 rounded uppercase">Confirm Delivery</button>
-                      <button onClick={() => executeFileDispute(Number(selectedItem.id))} className="bg-rose-950 px-3 py-1 text-[9px] font-black text-rose-400 border border-rose-500/30 rounded uppercase">File Dispute</button>
-                      <button onClick={() => executeCancelListing(Number(selectedItem.id), selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase())} className="bg-slate-900 px-3 py-1 text-[9px] font-black text-slate-400 border border-slate-600 rounded uppercase">Cancel Listing</button>
+                      <button onClick={() => executeConfirmDelivery(Number(selectedItem.contract_item_id || 0))} className="bg-emerald-950 px-3 py-1 text-[9px] font-black text-emerald-400 border border-emerald-500/30 rounded uppercase">Confirm Delivery</button>
+                      <button onClick={() => executeFileDispute(Number(selectedItem.contract_item_id || 0))} className="bg-rose-950 px-3 py-1 text-[9px] font-black text-rose-400 border border-rose-500/30 rounded uppercase">File Dispute</button>
+                      <button onClick={() => executeCancelListing(Number(selectedItem.contract_item_id || 0), selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase())} className="bg-slate-900 px-3 py-1 text-[9px] font-black text-slate-400 border border-slate-600 rounded uppercase">Cancel Listing</button>
                     </div>
                   </div>
                 </div>
