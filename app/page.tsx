@@ -1,11 +1,12 @@
 'use client';
+
 import { ethers } from 'ethers';
 
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, Suspense, useRef } from 'react';
 import { parseEther, formatEther, parseUnits, formatUnits, createPublicClient, http } from 'viem';
-import { baseSepolia } from 'wagmi/chains';
+import { base } from 'wagmi/chains';
 import { supabase } from '../lib/supabaseClient'; 
 import { useAccount, useConnect, useDisconnect, useWriteContract } from 'wagmi';
 
@@ -143,7 +144,35 @@ function MarketplaceContent() {
   };
 
   // Restored Cryptographic Verification Hook
-  const verifyNftOwnership = () => { setIsVerifyingNft(true); setTimeout(() => { setIsNftVerified(true); setIsVerifyingNft(false); alert("✅ CRYPTOGRAPHIC VERIFICATION COMPLETE."); }, 1000); };
+  const verifyNftOwnership = async () => {
+    setIsVerifyingNft(true);
+    try {
+      if (!nftContractAddress || !nftTokenId || !address) {
+        alert("⚠️ MISSING DATA: Contract Address, Token ID, and Vault Key required.");
+        setIsVerifyingNft(false);
+        return;
+      }
+      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const owner = await publicClient.readContract({
+        address: nftContractAddress as `0x${string}`,
+        abi: ERC721_ABI,
+        functionName: 'ownerOf',
+        args: [BigInt(nftTokenId)]
+      }) as string;
+      
+      if (owner.toLowerCase() === address.toLowerCase()) {
+        setIsNftVerified(true);
+        alert("✅ CRYPTOGRAPHIC VERIFICATION COMPLETE: On-chain ownership confirmed.");
+      } else {
+        setIsNftVerified(false);
+        alert("❌ VERIFICATION FAILED: Your vault key does not hold this asset.");
+      }
+    } catch(e: any) {
+      setIsNftVerified(false);
+      alert("❌ ORACLE ERROR: " + (e.reason || e.shortMessage || "Invalid contract or token ID."));
+    }
+    setIsVerifyingNft(false);
+  };
 
   const [activeTab, setActiveTab] = useState<'browse' | 'list' | 'vault_dashboard' | 'terms'>('browse');
   const [ethPriceUsd, setEthPriceUsd] = useState<number | null>(null);
@@ -296,7 +325,7 @@ function MarketplaceContent() {
 
   const syncV5Ledger = async () => {
     try {
-      const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+      const publicClient = createPublicClient({ chain: base, transport: http() });
       const activeListings: AuctionListing[] = [];
       let supabaseMetaMap = new Map();
       try {
@@ -453,7 +482,7 @@ function MarketplaceContent() {
   };
 
   const handleCreateAuction = async (e: React.FormEvent) => {
-    e.preventDefault(); if (chainId !== baseSepolia.id) return alert("Switch network to Base Sepolia Testnet.");
+    e.preventDefault(); if (chainId !== base.id) return alert("Switch network to Base Sepolia Testnet.");
     setIsProcessing(true);
     try {
       const isUsdc = selectedCurrency === 'USDC';
