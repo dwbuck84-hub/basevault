@@ -14,7 +14,7 @@ import { useAccount, useConnect, useDisconnect, useWriteContract } from 'wagmi';
 // ==========================================
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; 
 const ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
-const VAULT_V5_ADDRESS = "0x1EB0A260528B1639DD19B5CB61160797A8FB1EFF"; 
+const VAULT_V5_ADDRESS = "0x8714D5f904a9D96db101CE03287Dd161BAD90ac5"; 
 const DB_TABLE = "listings"; // Wired directly to your backend
 
 const ERC20_ABI = [{"inputs":[{"internalType":"address","name":"spender","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"approve","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
@@ -24,129 +24,19 @@ const ERC721_ABI = [
   {"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"tokenURI","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"}
 ];
 const MARKETPLACE_V5_ABI = [
-  {
-    "inputs": [],
-    "stateMutability": "nonpayable",
-    "type": "constructor"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"},
-      {"indexed": true, "internalType": "address", "name": "buyer", "type": "address"}
-    ],
-    "name": "EscrowLocked",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"},
-      {"indexed": true, "internalType": "address", "name": "seller", "type": "address"},
-      {"indexed": true, "internalType": "address", "name": "buyer", "type": "address"}
-    ],
-    "name": "FulfillmentConfirmed",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"}
-    ],
-    "name": "ItemCanceled",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {"indexed": true, "internalType": "uint256", "name": "id", "type": "uint256"},
-      {"indexed": true, "internalType": "address", "name": "seller", "type": "address"},
-      {"notIndexed": false, "internalType": "uint256", "name": "price", "type": "uint256"},
-      {"notIndexed": false, "internalType": "address", "name": "tokenAddress", "type": "address"},
-      {"notIndexed": false, "internalType": "bool", "name": "isPhysical", "type": "bool"}
-    ],
-    "name": "ItemListed",
-    "type": "event"
-  },
-  {
-    "inputs": [],
-    "name": "NATIVE_ETH",
-    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "PROTOCOL_FEE_PERCENT",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256", "name": "_id", "type": "uint256"}],
-    "name": "cancelListing",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256", "name": "_id", "type": "uint256"}],
-    "name": "confirmFulfillment",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getTotalItems",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "name": "items",
-    "outputs": [
-      {"internalType": "uint256", "name": "id", "type": "uint256"},
-      {"internalType": "address payable", "name": "seller", "type": "address"},
-      {"internalType": "address", "name": "buyer", "type": "address"},
-      {"internalType": "address", "name": "tokenAddress", "type": "address"},
-      {"internalType": "string", "name": "metadataURI", "type": "string"},
-      {"internalType": "uint256", "name": "price", "type": "uint256"},
-      {"internalType": "enum BaseVaultV5.ItemStatus", "name": "status", "type": "uint8"},
-      {"internalType": "bool", "name": "isPhysical", "type": "bool"}
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {"internalType": "string", "name": "_metadataURI", "type": "string"},
-      {"internalType": "uint256", "name": "_price", "type": "uint256"},
-      {"internalType": "address", "name": "_tokenAddress", "type": "address"},
-      {"internalType": "bool", "name": "_isPhysical", "type": "bool"}
-    ],
-    "name": "listItem",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "protocolOwner",
-    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256", "name": "_id", "type": "uint256"}],
-    "name": "purchaseItem",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  }
-]
-;
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"buyNow","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"},{"internalType":"uint256","name":"_bidAmount","type":"uint256"}],"name":"placeBid","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_price","type":"uint256"},{"internalType":"address","name":"_paymentToken","type":"address"},{"internalType":"uint8","name":"_assetType","type":"uint8"},{"internalType":"address","name":"_nftContract","type":"address"},{"internalType":"uint256","name":"_tokenId","type":"uint256"},{"internalType":"uint256","name":"_durationDays","type":"uint256"}],"name":"listAsset","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[],"name":"nextListingId","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"listings","outputs":[{"internalType":"address","name":"seller","type":"address"},{"internalType":"uint256","name":"price","type":"uint256"},{"internalType":"address","name":"paymentToken","type":"address"},{"internalType":"uint8","name":"assetType","type":"uint8"},{"internalType":"uint8","name":"status","type":"uint8"},{"internalType":"uint256","name":"auctionEndTime","type":"uint256"},{"internalType":"address","name":"highestBidder","type":"address"},{"internalType":"uint256","name":"highestBid","type":"uint256"},{"internalType":"address","name":"nftContract","type":"address"},{"internalType":"uint256","name":"tokenId","type":"uint256"},{"internalType":"bool","name":"fundsReleased","type":"bool"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"markShipped","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"confirmDelivery","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"fileDispute","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"autoReleaseEscrow","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_id","type":"uint256"}],"name":"cancelListing","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"address","name":"","type":"address"}],"name":"pendingRefunds","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+];
+
 const PHYSICAL_CATEGORIES = ["Electronics & Hardware", "Collectibles & Cards", "Apparel & Garments", "Automotive Parts", "Home & Living", "Tools & Equipment", "Books & Media", "Sports & Outdoors", "Toys & Hobbies", "Jewelry & Watches"];
 const BOUNTY_CATEGORIES = ["Software Development", "Digital Art & Design", "Marketing & Copywriting", "Smart Contract Auditing", "Video Editing", "Translation Services", "Technical Writing", "UI/UX Design", "Cyber Security"];
 
@@ -192,10 +82,10 @@ function MarketplaceContent() {
         // Step 1: Approve USDC router
         await writeContractAsync({ address: USDC_ADDRESS as `0x${string}`, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_V5_ADDRESS, bidWei] });
         // Step 2: Lock into Matrix Escrow
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'purchaseItem', args: [BigInt(selectedItem.id)] });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.id)] : [BigInt(selectedItem.id), bidWei] });
       } else {
         // Native ETH instant routing
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'purchaseItem', args: [BigInt(selectedItem.id)], value: bidWei });
+        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.id)] : [BigInt(selectedItem.id), bidWei], value: bidWei });
       }
       
       if (selectedItem.type === 'physical') {
@@ -376,11 +266,11 @@ function MarketplaceContent() {
       } catch (e) {}
 
       let counter = BigInt(0);
-      try { counter = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'auctionCounter' }) as bigint; } catch(e) { return; }
+      try { counter = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'nextListingId' }) as bigint; } catch(e) { return; }
 
       for (let i = BigInt(1); i <= counter; i++) {
         try {
-          const rawAuc = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'auctions', args: [i] }) as any;
+          const rawAuc = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'listings', args: [i] }) as any;
           if (!rawAuc || rawAuc.seller === ETH_ADDRESS) continue;
           const isUsdc = rawAuc.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
           const meta = supabaseMetaMap.get(Number(i)) || {};
