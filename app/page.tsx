@@ -138,16 +138,30 @@ function MarketplaceContent() {
       const isUsdc = selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
       const bidWei = isUsdc ? parseUnits(finalAmountToUse, 6) : parseEther(finalAmountToUse);
       
+      const publicClient = createPublicClient({ chain: base, transport: http() });
+      let txHash;
+
       if (isUsdc) {
         // Step 1: Approve USDC router
-        await writeContractAsync({ address: USDC_ADDRESS as `0x${string}`, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_V5_ADDRESS, bidWei] });
+        const approveHash = await writeContractAsync({ address: USDC_ADDRESS as `0x${string}`, abi: ERC20_ABI, functionName: 'approve', args: [VAULT_V5_ADDRESS, bidWei] });
+        console.log("Waiting for USDC approval to mine (Hash: " + approveHash + ")...");
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        
         // Step 2: Lock into Matrix Escrow
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.contract_item_id || 0)] : [BigInt(selectedItem.contract_item_id || 0), bidWei] });
+        txHash = await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.contract_item_id || 0)] : [BigInt(selectedItem.contract_item_id || 0), bidWei] });
       } else {
         // Native ETH instant routing
-        await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.contract_item_id || 0)] : [BigInt(selectedItem.contract_item_id || 0), bidWei], value: bidWei });
+        txHash = await writeContractAsync({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: selectedItem.saleMode === 'fixed' ? 'buyNow' : 'placeBid', args: selectedItem.saleMode === 'fixed' ? [BigInt(selectedItem.contract_item_id || 0)] : [BigInt(selectedItem.contract_item_id || 0), bidWei], value: bidWei });
       }
       
+      console.log("Transaction signed! Waiting for Base network confirmation... Hash: ", txHash);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status !== 'success') {
+        throw new Error("Transaction reverted on the blockchain.");
+      }
+      console.log("Bid/Purchase confirmed on-chain!");
+
       if (selectedItem.type === 'physical') {
         await supabase.from(DB_TABLE).update({ selected_shipping_option: chosenShippingTier }).eq('id', selectedItem.id);
       }
@@ -529,7 +543,8 @@ function MarketplaceContent() {
       }) as bigint;
 
       console.log("Transmitting Listing to Base Mainnet (ID: " + nextId + ")...");
-      await writeContractAsync({
+      
+      const txHash = await writeContractAsync({
         address: VAULT_V5_ADDRESS as `0x${string}`,
         abi: MARKETPLACE_V5_ABI,
         functionName: 'listAsset',
@@ -537,7 +552,16 @@ function MarketplaceContent() {
         value: isUsdc ? BigInt(0) : (parsedPrice * BigInt(15)) / BigInt(1000)
       });
 
-      console.log("On-chain transmission complete. Writing to decentralized matrix...");
+      console.log("Transaction signed by wallet! Hash:", txHash);
+      console.log("Waiting for Base network block confirmation...");
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status !== 'success') {
+        throw new Error("Transaction reverted on the blockchain.");
+      }
+
+      console.log("Block confirmed! Writing to decentralized matrix...");
       const dbRecord = {
         title: formTitle,
         description: formDescription,
