@@ -138,7 +138,7 @@ function MarketplaceContent() {
       const isUsdc = selectedItem.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
       const bidWei = isUsdc ? parseUnits(finalAmountToUse, 6) : parseEther(finalAmountToUse);
       
-      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const publicClient = createPublicClient({ chain: base, transport: http('https://base-rpc.publicnode.com') });
       let txHash;
 
       if (isUsdc) {
@@ -186,7 +186,7 @@ function MarketplaceContent() {
         setIsVerifyingNft(false);
         return;
       }
-      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const publicClient = createPublicClient({ chain: base, transport: http('https://base-rpc.publicnode.com') });
       const owner = await publicClient.readContract({
         address: nftContractAddress as `0x${string}`,
         abi: ERC721_ABI,
@@ -359,35 +359,37 @@ function MarketplaceContent() {
 
   const syncV5Ledger = async () => {
     try {
-      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const publicClient = createPublicClient({ chain: base, transport: http('https://base-rpc.publicnode.com') });
       const activeListings: AuctionListing[] = [];
       let supabaseMetaMap = new Map();
       try {
-        const { data: dbData } = await supabase.from(DB_TABLE).select('*').limit(1000);
-        if (dbData) dbData.forEach(i => { supabaseMetaMap.set(Number(i.id), i); });
+        const { data: dbData } = await supabase.from('listings').select('*').limit(1000);
+        console.log('🔥 MATRIX X-RAY - SUPABASE RETURNED:', dbData);
+        if (dbData) dbData.forEach(i => { supabaseMetaMap.set(Number(i.contract_item_id), i); });
       } catch (e) {}
 
       let counter = BigInt(0);
-      try { counter = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'nextListingId' }) as bigint; } catch(e) { return; }
+      try { counter = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'nextListingId' }) as bigint; console.log('🔥 BLOCKCHAIN X-RAY - TOTAL ITEMS:', counter.toString()); } catch(e) { console.error('🔥 BLOCKCHAIN RPC ERROR:', e); return; }
 
       for (let i = BigInt(1); i <= counter; i++) {
         try {
           const rawAuc = await publicClient.readContract({ address: VAULT_V5_ADDRESS as `0x${string}`, abi: MARKETPLACE_V5_ABI, functionName: 'listings', args: [i] }) as any;
-          if (!rawAuc || rawAuc.seller === ETH_ADDRESS) continue;
-          const isUsdc = rawAuc.paymentToken.toLowerCase() === USDC_ADDRESS.toLowerCase();
-          const meta = supabaseMetaMap.get(Number(i)) || {};
+          console.log('🔥 ITEM RAW DATA:', rawAuc);
+          if (!rawAuc || rawAuc[0] === ETH_ADDRESS) continue;
+          const isUsdc = rawAuc[2].toLowerCase() === USDC_ADDRESS.toLowerCase();
+          const meta = supabaseMetaMap.get(Number(i)) || {}; console.log(`🔥 MERGE X-RAY - Blockchain ID: ${i} | DB Match Found:`, !!meta.title);
 
           activeListings.push({
-            id: i.toString(), type: rawAuc.assetType === 0 ? 'digital' : rawAuc.assetType === 1 ? 'physical' : 'tokenized_nft',
+            id: i.toString(), type: rawAuc[3] === 0 ? 'digital' : rawAuc[3] === 1 ? 'physical' : 'tokenized_nft',
             title: meta.title || `Node #${i}`, category: meta.category || "Asset", description: meta.description || "",
             images: meta.images?.length > 0 ? meta.images : ["https://images.unsplash.com/photo-1639762681485-074b7f938ba0?q=80&w=2832&auto=format&fit=crop"],
-            seller: rawAuc.seller, highestBidder: rawAuc.highestBidder,
-            reservePrice: isUsdc ? formatUnits(rawAuc.reservePrice, 6) : formatEther(rawAuc.reservePrice),
-            highestBid: isUsdc ? formatUnits(rawAuc.highestBid, 6) : formatEther(rawAuc.highestBid),
-            endTime: Number(rawAuc.endTime), paymentToken: rawAuc.paymentToken, settled: rawAuc.settled,
+            seller: rawAuc[0], highestBidder: rawAuc[6],
+            reservePrice: isUsdc ? formatUnits(rawAuc[1], 6) : formatEther(rawAuc[1]),
+            highestBid: isUsdc ? formatUnits(rawAuc[7], 6) : formatEther(rawAuc[7]),
+            endTime: Number(rawAuc.endTime), paymentToken: rawAuc[2], settled: rawAuc.settled,
             shippingAddress: meta.shipping_address, trackingInfo: meta.tracking_info, shippingLabelUrl: meta.shipping_label_url,
             sellerRating: meta.seller_rating, buyerRating: meta.buyer_rating, selectedShippingOption: meta.selected_shipping_option, premiumShipping: meta.premium_shipping,
-            saleMode: meta.sale_mode || (rawAuc.assetType === 0 ? 'fixed' : 'auction')
+            saleMode: meta.sale_mode || (rawAuc[3] === 0 ? 'fixed' : 'auction')
           });
         } catch (err) {}
       }
@@ -535,7 +537,7 @@ function MarketplaceContent() {
       const tId = formType === 'tokenized_nft' ? BigInt(nftTokenId || 0) : BigInt(0);
 
       // Pre-fetch the ID the contract will assign
-      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const publicClient = createPublicClient({ chain: base, transport: http('https://base-rpc.publicnode.com') });
       const nextId = await publicClient.readContract({
         address: VAULT_V5_ADDRESS as `0x${string}`,
         abi: MARKETPLACE_V5_ABI,
@@ -570,12 +572,12 @@ function MarketplaceContent() {
         reservePrice: formReservePrice,
         paymentToken: paymentToken,
         seller: address,
-        highestBidder: ETH_ADDRESS,
-        highestBid: "0",
-        auctionEndTime: Math.floor(Date.now() / 1000) + parseInt(formDuration),
-        status: 0,
+        highest_bidder: ETH_ADDRESS,
+        highest_bid: "0",
+        auction_end_time: new Date(Date.now() + parseInt(formDuration) * 1000).toISOString(),
+        status: "0",
         images: uploadedImageUrls,
-        nftContract: nftAddress,
+        nftContract: nftContractAddress,
         tokenId: Number(tId),
         contract_item_id: Number(nextId)
       };
@@ -634,7 +636,7 @@ function MarketplaceContent() {
                   <div className="flex-1 relative">
                     <input 
                       type="text" 
-                      value={searchQuery}
+                      name="searchQuery" id="searchQuery" aria-label="Search ledger positions" value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
                       placeholder="🔍 Search ledger positions by title, parameter description, or domain..." 
                       className="w-full bg-[#090d16] border border-slate-700 rounded-lg px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
@@ -777,7 +779,7 @@ function MarketplaceContent() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">System Title</label><input type="text" required value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white" /></div>
+                  <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">System Title<input type="text" required value={formTitle} onChange={e => setFormTitle(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white mt-1.5" /></label></div>
                   {formType !== 'tokenized_nft' && (
                     <div>
                       <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Domain Category</label>
@@ -812,7 +814,7 @@ function MarketplaceContent() {
                   </div>
                 )}
 
-                <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Specifications Description</label><textarea required value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={2} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white outline-none" /></div>
+                <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Specifications Description<textarea required value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={2} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-white outline-none mt-1.5" /></label></div>
 
                 {formType === 'tokenized_nft' && (
                   <div className="p-3 bg-[#090d16] border border-emerald-500/20 rounded space-y-2">
@@ -822,7 +824,7 @@ function MarketplaceContent() {
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">{saleMode === 'fixed' ? 'Fixed List Price' : 'Starting Reserve Value'}</label><input type="number" step="0.0001" required value={formReservePrice} onChange={e => setFormReservePrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs font-bold text-emerald-400" /></div>
+                  <div><label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">{saleMode === 'fixed' ? 'Fixed List Price' : 'Starting Reserve Value'}<input type="number" step="0.0001" required value={formReservePrice} onChange={e => setFormReservePrice(e.target.value)} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs font-bold text-emerald-400 mt-1.5" /></label></div>
                   <div>
                     <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5">Settlement Currency</label>
                     <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value as 'ETH' | 'USDC')} className="w-full p-2.5 bg-[#090d16] border border-slate-800 rounded text-xs text-zinc-200"><option value="ETH">ETH (Native Gas Asset)</option><option value="USDC">USDC (Stable Standard)</option></select>
@@ -965,7 +967,7 @@ function MarketplaceContent() {
               ))}
             </div>
             <form onSubmit={handleAssistantSubmit} className="mt-2 flex gap-1">
-              <input type="text" value={assistantInput} onChange={e => setAssistantInput(e.target.value)} placeholder="Query framework state..." className="flex-1 bg-black border border-slate-700 rounded px-2 py-1 text-[10px] text-white outline-none" />
+              <input type="text" name="assistantInput" id="assistantInput" aria-label="Query framework state" value={assistantInput} onChange={e => setAssistantInput(e.target.value)} placeholder="Query framework state..." className="flex-1 bg-black border border-slate-700 rounded px-2 py-1 text-[10px] text-white outline-none" />
               <button type="submit" className="bg-cyan-900 hover:bg-cyan-800 px-2 py-1 text-[9px] font-black uppercase rounded">ASK</button>
             </form>
           </div>
@@ -1060,11 +1062,17 @@ function MarketplaceContent() {
                         {selectedItem.saleMode !== 'fixed' && (
                         <input type="number" step="0.0001" placeholder="Bid Amount..." value={bidInput} onChange={e => setBidInput(e.target.value)} className="w-32 bg-black border border-slate-700 rounded px-3 py-2 text-emerald-400 text-xs outline-none" />
                       )}
-                      <button onClick={handlePlaceBid} className="flex-1 bg-emerald-500 hover:bg-emerald-400 transition-colors text-black px-6 py-3 rounded text-[11px] font-black uppercase tracking-wider text-center">
+                      {selectedItem.saleMode !== 'fixed' && Number(selectedItem.auctionEndTime) > 0 && Math.floor(Date.now() / 1000) > Number(selectedItem.auctionEndTime) ? (
+                            <button disabled className="flex-1 bg-slate-900 border border-slate-800 text-slate-500 cursor-not-allowed px-6 py-3 rounded text-[11px] font-black uppercase tracking-wider text-center">
+                              🔒 AUCTION ENDED
+                            </button>
+                          ) : (
+                            <button onClick={handlePlaceBid} className="flex-1 bg-emerald-500 hover:bg-emerald-400 transition-colors text-black px-6 py-3 rounded text-[11px] font-black uppercase tracking-wider text-center">
                         {selectedItem.saleMode === 'fixed' 
                           ? `🛒 BUY NOW FOR ${selectedItem.reservePrice} ${selectedItem.paymentToken?.toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' : 'ETH'}` 
                           : (selectedItem.type === 'digital' ? 'SECURE BOUNTY PIPELINE' : 'TRANSMIT BID')}
                       </button>
+                          )}
                     </div>
                   )}
 
@@ -1084,7 +1092,7 @@ function MarketplaceContent() {
                   <div className="flex-1 p-3 overflow-y-auto space-y-2 text-[11px] font-sans">
                     {bountyMessages.map((msg, i) => ( <div key={i} className={`p-2 rounded max-w-[80%] ${msg.sender === address ? 'bg-cyan-950 text-cyan-200 ml-auto' : 'bg-slate-900 text-slate-300 mr-auto'}`}>{msg.text}</div> ))}
                   </div>
-                  <form onSubmit={handleClientMessageSubmit} className="p-2 border-t border-slate-800 flex gap-2"><input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} className="flex-1 bg-[#10172a] border border-slate-800 rounded px-2 text-xs text-white outline-none" /><button type="submit" className="bg-cyan-900 px-3 text-[10px] font-black uppercase">SEND</button></form>
+                  <form onSubmit={handleClientMessageSubmit} className="p-2 border-t border-slate-800 flex gap-2"><input type="text" name="chatInput" id="chatInput" aria-label="Chat input" value={chatInput} onChange={e => setChatInput(e.target.value)} className="flex-1 bg-[#10172a] border border-slate-800 rounded px-2 text-xs text-white outline-none" /><button type="submit" className="bg-cyan-900 px-3 text-[10px] font-black uppercase">SEND</button></form>
                 </div>
               )}
 
@@ -1108,7 +1116,7 @@ function MarketplaceContent() {
                   </div>
                   <div className="bg-black border border-slate-800 p-3 rounded">
                     <h4 className="text-[10px] text-emerald-400 font-black uppercase mb-2">Transit Manifest Submission</h4>
-                    <input type="text" value={fulfillmentTracking} onChange={e => setFulfillmentTracking(e.target.value)} placeholder="Tracking Identifier..." className="w-full bg-[#10172a] border border-slate-700 rounded p-2 text-xs text-white outline-none" />
+                    <input type="text" name="fulfillmentTracking" id="fulfillmentTracking" aria-label="Tracking Identifier" value={fulfillmentTracking} onChange={e => setFulfillmentTracking(e.target.value)} placeholder="Tracking Identifier..." className="w-full bg-[#10172a] border border-slate-700 rounded p-2 text-xs text-white outline-none" />
                     <button onClick={handleSaveTracking} className="mt-2 bg-emerald-950 px-3 py-1 text-[9px] font-black text-emerald-400 border border-emerald-500/30 rounded uppercase">Transmit Manifest</button>
                     <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap gap-2">
                       <button onClick={() => executeConfirmDelivery(Number(selectedItem.contract_item_id || 0))} className="bg-emerald-950 px-3 py-1 text-[9px] font-black text-emerald-400 border border-emerald-500/30 rounded uppercase">Confirm Delivery</button>
